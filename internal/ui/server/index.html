@@ -1,0 +1,804 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Настройки ClipQueue</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background-color: #1a1a1a;
+            color: #e0e0e0;
+            line-height: 1.6;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: #2d2d2d;
+            border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 24px 32px;
+            border-bottom: 1px solid #444;
+        }
+
+        .header h1 {
+            font-size: 28px;
+            font-weight: 700;
+            color: white;
+            letter-spacing: -0.5px;
+        }
+
+        .content {
+            padding: 32px;
+        }
+
+        .section {
+            margin-bottom: 40px;
+        }
+
+        .section-title {
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 20px;
+            color: #ffffff;
+            padding-bottom: 8px;
+            border-bottom: 2px solid #444;
+        }
+
+        .form-group {
+            margin-bottom: 24px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 14px;
+            font-weight: 500;
+            margin-bottom: 8px;
+            color: #ccc;
+        }
+
+        .form-control {
+            width: 100%;
+            padding: 10px 14px;
+            font-size: 14px;
+            background-color: #3d3d3d;
+            border: 1px solid #555;
+            border-radius: 8px;
+            color: #e0e0e0;
+            transition: all 0.2s ease;
+        }
+
+        .form-control:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .form-control::placeholder {
+            color: #666;
+        }
+
+        select.form-control {
+            cursor: pointer;
+        }
+
+        select.form-control option {
+            background-color: #3d3d3d;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 10px 20px;
+            font-size: 14px;
+            font-weight: 500;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            text-decoration: none;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+        }
+
+        .btn-primary:active {
+            transform: translateY(0);
+        }
+
+        .btn-secondary {
+            background-color: #444;
+            color: #e0e0e0;
+        }
+
+        .btn-secondary:hover {
+            background-color: #555;
+        }
+
+        .btn-danger {
+            background-color: #dc2626;
+            color: white;
+            padding: 6px 12px;
+            font-size: 12px;
+        }
+
+        .btn-danger:hover {
+            background-color: #b91c1c;
+        }
+
+        .btn-success {
+            background-color: #16a34a;
+            color: white;
+            padding: 6px 12px;
+            font-size: 12px;
+        }
+
+        .btn-success:hover {
+            background-color: #15803d;
+        }
+
+        .table-container {
+            overflow-x: auto;
+            margin-top: 20px;
+            border-radius: 8px;
+            border: 1px solid #444;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        thead {
+            background-color: #3d3d3d;
+        }
+
+        th {
+            padding: 12px 16px;
+            text-align: left;
+            font-size: 14px;
+            font-weight: 600;
+            color: #e0e0e0;
+            border-bottom: 1px solid #555;
+        }
+
+        tbody tr {
+            border-bottom: 1px solid #444;
+            transition: background-color 0.2s ease;
+        }
+
+        tbody tr:hover {
+            background-color: #3d3d3d;
+        }
+
+        td {
+            padding: 12px 16px;
+            font-size: 14px;
+            color: #ccc;
+        }
+
+        .actions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(4px);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background-color: #2d2d2d;
+            border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+            width: 100%;
+            max-width: 500px;
+            overflow: hidden;
+        }
+
+        .modal-header {
+            padding: 20px 24px;
+            border-bottom: 1px solid #444;
+            background-color: #3d3d3d;
+        }
+
+        .modal-header h2 {
+            font-size: 18px;
+            font-weight: 600;
+            color: #e0e0e0;
+        }
+
+        .modal-body {
+            padding: 24px;
+        }
+
+        .modal-footer {
+            padding: 16px 24px;
+            border-top: 1px solid #444;
+            display: flex;
+            gap: 12px;
+            justify-content: flex-end;
+        }
+
+        .hotkey-input {
+            font-family: monospace;
+            font-size: 16px;
+            letter-spacing: 1px;
+            text-align: center;
+            padding: 12px;
+            background-color: #3d3d3d;
+            border: 2px solid #555;
+            border-radius: 8px;
+            color: #e0e0e0;
+            transition: all 0.2s ease;
+            cursor: pointer;
+        }
+
+        .hotkey-input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .hotkey-input.active {
+            border-color: #667eea;
+            background-color: #4a4a6a;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.2);
+        }
+
+        .hotkey-input.recording {
+            border-color: #dc2626;
+            background-color: #4a2a2a;
+            box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.2);
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0% {
+                box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.2);
+            }
+            50% {
+                box-shadow: 0 0 0 6px rgba(220, 38, 38, 0.4);
+            }
+            100% {
+                box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.2);
+            }
+        }
+
+        .spinner {
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid #dc2626;
+            border-radius: 50%;
+            width: 16px;
+            height: 16px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+            margin-right: 8px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        textarea.form-control {
+            min-height: 100px;
+            resize: vertical;
+            font-family: monospace;
+        }
+
+        .status-message {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 12px 20px;
+            border-radius: 8px;
+            color: white;
+            font-weight: 500;
+            z-index: 2000;
+            transform: translateX(400px);
+            transition: transform 0.3s ease;
+        }
+
+        .status-message.show {
+            transform: translateX(0);
+        }
+
+        .status-message.success {
+            background-color: #16a34a;
+        }
+
+        .status-message.error {
+            background-color: #dc2626;
+        }
+
+        .status-message.info {
+            background-color: #667eea;
+        }
+
+        @media (max-width: 640px) {
+            body {
+                padding: 10px;
+            }
+
+            .content {
+                padding: 20px;
+            }
+
+            .header h1 {
+                font-size: 24px;
+            }
+
+            .section-title {
+                font-size: 18px;
+            }
+
+            .modal-content {
+                margin: 10px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Настройки ClipQueue</h1>
+        </div>
+
+        <div class="content">
+            <div class="section">
+                <h2 class="section-title">Основные Настройки</h2>
+
+                <div class="form-group">
+                    <label for="toggleQueue">Горячая клавиша для открытия/закрытия очереди</label>
+                    <div style="display: flex; gap: 8px;">
+                        <input type="text" id="toggleQueue" class="hotkey-input" placeholder="Нажмите сочетание клавиш" readonly>
+                        <button class="btn btn-secondary" onclick="startCapture('toggleQueue')">Записать</button>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="pasteNext">Горячая клавиша для вставки следующего элемента</label>
+                    <div style="display: flex; gap: 8px;">
+                        <input type="text" id="pasteNext" class="hotkey-input" placeholder="Нажмите сочетание клавиш" readonly>
+                        <button class="btn btn-secondary" onclick="startCapture('pasteNext')">Записать</button>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="defaultOrder">Порядок очереди по умолчанию</label>
+                    <select id="defaultOrder" class="form-control">
+                        <option value="LIFO">LIFO (Последний добавленный - первый выведен)</option>
+                        <option value="FIFO">FIFO (Первый добавленный - первый выведен)</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="watchDebounce">Задержка при отслеживании буфера (мс)</label>
+                    <input type="number" id="watchDebounce" class="form-control" min="1" max="1000">
+                </div>
+
+                <div class="form-group">
+                    <label for="pasteDelay">Задержка при вставке (мс)</label>
+                    <input type="number" id="pasteDelay" class="form-control" min="1" max="2000">
+                </div>
+
+                <div class="form-group">
+                    <label for="restoreDelay">Задержка при восстановлении буфера (мс)</label>
+                    <input type="number" id="restoreDelay" class="form-control" min="100" max="5000">
+                </div>
+            </div>
+
+            <div class="section">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                    <h2 class="section-title">Макросы</h2>
+                    <button class="btn btn-primary" onclick="openMacroModal()">
+                        Добавить Макрос
+                    </button>
+                </div>
+
+                <div class="table-container">
+                    <table id="macrosTable">
+                        <thead>
+                            <tr>
+                                <th>Горячая Клавиша</th>
+                                <th>Текст</th>
+                                <th>Режим Ввода</th>
+                                <th style="width: 150px;">Действия</th>
+                            </tr>
+                        </thead>
+                        <tbody id="macrosBody">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div style="display: flex; gap: 12px; justify-content: flex-end;">
+                <button class="btn btn-primary" onclick="saveSettings()">
+                    Сохранить Настройки
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div id="macroModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modalTitle">Добавить Макрос</h2>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="macroHotkey">Горячая Клавиша</label>
+                    <div style="display: flex; gap: 8px;">
+                        <input type="text" id="macroHotkey" class="hotkey-input" placeholder="Нажмите сочетание клавиш" readonly>
+                        <button class="btn btn-secondary" onclick="startCapture('macroHotkey')">Записать</button>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="macroText">Текст</label>
+                    <textarea id="macroText" class="form-control" placeholder="Введите текст для макроса"></textarea>
+                </div>
+                <div class="form-group">
+                    <label for="macroMode">Режим Ввода</label>
+                    <select id="macroMode" class="form-control">
+                        <option value="type">Посимвольный ввод (Type)</option>
+                        <option value="paste">Вставка через буфер (Paste)</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeMacroModal()">Отмена</button>
+                <button class="btn btn-primary" onclick="saveMacro()">Сохранить</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="statusMessage" class="status-message"></div>
+
+    <script>
+        let config = null;
+        let editingHotkey = null;
+        let selectedHotkeyInput = null;
+
+        // Load config on page load
+        document.addEventListener('DOMContentLoaded', () => {
+            loadConfig();
+            setupHotkeyInputs();
+        });
+
+        // Load config from API
+        async function loadConfig() {
+            try {
+                const response = await fetch('/api/config');
+                if (!response.ok) {
+                    throw new Error('Не удалось загрузить настройки');
+                }
+                config = await response.json();
+                populateForm();
+            } catch (error) {
+                showStatus('Ошибка загрузки настроек: ' + error.message, 'error');
+            }
+        }
+
+        // Populate form with config data
+        function populateForm() {
+            if (config && config.Hotkeys) {
+                document.getElementById('toggleQueue').value = config.Hotkeys.ToggleQueue || '';
+                document.getElementById('pasteNext').value = config.Hotkeys.PasteNext || '';
+            }
+            if (config && config.Queue) {
+                document.getElementById('defaultOrder').value = config.Queue.DefaultOrder || 'LIFO';
+            }
+            if (config && config.Clipboard) {
+                document.getElementById('watchDebounce').value = config.Clipboard.WatchDebounceMs || 30;
+                document.getElementById('pasteDelay').value = config.Clipboard.PasteDelayMs || 150;
+                document.getElementById('restoreDelay').value = config.Clipboard.RestoreDelayMs || 1000;
+            }
+            if (config && config.Macros) {
+                populateMacrosTable();
+            }
+        }
+
+        // Populate macros table
+        function populateMacrosTable() {
+            const tbody = document.getElementById('macrosBody');
+            tbody.innerHTML = '';
+
+            for (const [hotkey, macro] of Object.entries(config.Macros)) {
+                const row = document.createElement('tr');
+                const modeText = macro.mode === 'paste' ? 'Вставка через буфер' : 'Посимвольный ввод';
+                row.innerHTML = `
+                    <td><code>${hotkey}</code></td>
+                    <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(macro.text)}</td>
+                    <td>${modeText}</td>
+                    <td>
+                        <div class="actions">
+                            <button class="btn btn-success" onclick="editMacro('${hotkey}')">Редактировать</button>
+                            <button class="btn btn-danger" onclick="deleteMacro('${hotkey}')">Удалить</button>
+                        </div>
+                    </td>
+                `;
+                tbody.appendChild(row);
+            }
+        }
+
+        // Start hotkey capture
+        async function startCapture(inputId) {
+            const input = document.getElementById(inputId);
+            const originalValue = input.value;
+            const originalPlaceholder = input.placeholder;
+            
+            // Set recording state
+            input.value = 'Нажмите сочетание клавиш...';
+            input.classList.add('recording');
+            
+            try {
+                const response = await fetch('/api/hotkeys/capture', {
+                    method: 'POST'
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok && data.hotkey) {
+                    input.value = data.hotkey;
+                } else {
+                    input.value = originalValue;
+                    showStatus(data.error || 'Ошибка при захвате горячей клавиши', 'error');
+                }
+            } catch (error) {
+                input.value = originalValue;
+                showStatus('Ошибка при подключении к серверу: ' + error.message, 'error');
+            } finally {
+                input.classList.remove('recording');
+            }
+        }
+
+        // Setup hotkey inputs
+        function setupHotkeyInputs() {
+            // Remove old event listeners since inputs are now readonly
+            const hotkeyInputs = document.querySelectorAll('.hotkey-input');
+            hotkeyInputs.forEach(input => {
+                // Remove keydown listener since we're using API capture now
+                // input.removeEventListener('keydown', handleHotkeyEvent);
+                // Keep focus/blur listeners if needed
+                input.addEventListener('focus', handleHotkeyFocus);
+                input.addEventListener('blur', handleHotkeyBlur);
+            });
+        }
+
+        // Handle hotkey event
+        function handleHotkeyEvent(e) {
+            e.preventDefault();
+            e.stopPropagation();
+
+            // Ignore if it's just a modifier key
+            if (['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) {
+                return;
+            }
+
+            const modifiers = [];
+            if (e.ctrlKey) modifiers.push('Ctrl');
+            if (e.altKey) modifiers.push('Alt');
+            if (e.shiftKey) modifiers.push('Shift');
+            if (e.metaKey) modifiers.push('Win');
+
+            const key = normalizeKey(e.key);
+            const hotkey = [...modifiers, key].join('+');
+            e.target.value = hotkey;
+        }
+
+        // Normalize key names
+        function normalizeKey(key) {
+            const map = {
+                'ArrowUp': 'Up',
+                'ArrowDown': 'Down',
+                'ArrowLeft': 'Left',
+                'ArrowRight': 'Right',
+                'Enter': 'Enter',
+                'Escape': 'Esc',
+                'Backspace': 'Backspace',
+                'Tab': 'Tab',
+                'Home': 'Home',
+                'End': 'End',
+                'PageUp': 'PageUp',
+                'PageDown': 'PageDown',
+                'F1': 'F1', 'F2': 'F2', 'F3': 'F3', 'F4': 'F4',
+                'F5': 'F5', 'F6': 'F6', 'F7': 'F7', 'F8': 'F8',
+                'F9': 'F9', 'F10': 'F10', 'F11': 'F11', 'F12': 'F12'
+            };
+
+            return map[key] || key;
+        }
+
+        // Handle hotkey input focus
+        function handleHotkeyFocus(e) {
+            e.target.classList.add('active');
+        }
+
+        // Handle hotkey input blur
+        function handleHotkeyBlur(e) {
+            e.target.classList.remove('active');
+        }
+
+        // Open macro modal
+        function openMacroModal(hotkey = null) {
+            editingHotkey = hotkey;
+            const modal = document.getElementById('macroModal');
+            const title = document.getElementById('modalTitle');
+
+            if (hotkey) {
+                title.textContent = 'Редактировать Макрос';
+                document.getElementById('macroHotkey').value = hotkey;
+                const macro = config.Macros[hotkey];
+                document.getElementById('macroText').value = macro.text;
+                document.getElementById('macroMode').value = macro.mode || 'type';
+            } else {
+                title.textContent = 'Добавить Макрос';
+                document.getElementById('macroHotkey').value = '';
+                document.getElementById('macroText').value = '';
+                document.getElementById('macroMode').value = 'type';
+            }
+
+            modal.classList.add('active');
+        }
+
+        // Close macro modal
+        function closeMacroModal() {
+            const modal = document.getElementById('macroModal');
+            modal.classList.remove('active');
+            editingHotkey = null;
+        }
+
+        // Save macro
+        function saveMacro() {
+            const hotkey = document.getElementById('macroHotkey').value.trim();
+            const text = document.getElementById('macroText').value.trim();
+            const mode = document.getElementById('macroMode').value;
+
+            if (!hotkey) {
+                showStatus('Горячая клавиша обязательна', 'error');
+                return;
+            }
+
+            if (!text) {
+                showStatus('Текст макроса обязателен', 'error');
+                return;
+            }
+
+            if (editingHotkey) {
+                delete config.Macros[editingHotkey];
+            }
+
+            config.Macros[hotkey] = {
+                text: text,
+                mode: mode
+            };
+            populateMacrosTable();
+            closeMacroModal();
+            showStatus('Макрос сохранен', 'success');
+        }
+
+        // Edit macro
+        function editMacro(hotkey) {
+            openMacroModal(hotkey);
+        }
+
+        // Delete macro
+        function deleteMacro(hotkey) {
+            if (!confirm(`Вы уверены, что хотите удалить макрос "${hotkey}"?`)) {
+                return;
+            }
+
+            delete config.Macros[hotkey];
+            populateMacrosTable();
+            showStatus('Макрос удален', 'success');
+        }
+
+        // Save config
+        async function saveSettings() {
+            try {
+                if (!config) {
+                    config = {
+                        Hotkeys: {},
+                        Clipboard: {},
+                        Queue: {},
+                        Macros: {}
+                    };
+                }
+
+                config.Hotkeys.ToggleQueue = document.getElementById('toggleQueue').value;
+                config.Hotkeys.PasteNext = document.getElementById('pasteNext').value;
+                config.Queue.DefaultOrder = document.getElementById('defaultOrder').value;
+                config.Clipboard.WatchDebounceMs = parseInt(document.getElementById('watchDebounce').value);
+                config.Clipboard.PasteDelayMs = parseInt(document.getElementById('pasteDelay').value);
+                config.Clipboard.RestoreDelayMs = parseInt(document.getElementById('restoreDelay').value);
+
+                const response = await fetch('/api/config', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(config)
+                });
+
+                if (!response.ok) {
+                    throw new Error('Не удалось сохранить настройки');
+                }
+
+                showStatus('Настройки сохранены успешно', 'success');
+            } catch (error) {
+                showStatus('Ошибка при сохранении настроек: ' + error.message, 'error');
+            }
+        }
+
+        // Show status message
+        function showStatus(message, type) {
+            const statusElement = document.getElementById('statusMessage');
+            statusElement.textContent = message;
+            statusElement.className = `status-message ${type}`;
+            statusElement.classList.add('show');
+
+            setTimeout(() => {
+                statusElement.classList.remove('show');
+            }, 3000);
+        }
+
+        // Escape HTML
+        function escapeHtml(text) {
+            const map = {
+                '&': '&',
+                '<': '<',
+                '>': '>',
+                '"': '"',
+                "'": '&#039;'
+            };
+            return text.replace(/[&<>"]/g, function(m) { return map[m]; });
+        }
+
+        // Close modal when clicking outside
+        window.addEventListener('click', function(e) {
+            const modal = document.getElementById('macroModal');
+            if (e.target === modal) {
+                closeMacroModal();
+            }
+        });
+    </script>
+</body>
+</html>
