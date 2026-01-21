@@ -44,6 +44,8 @@ func (t ContentType) String() string {
 
 // ClipboardContent contains the clipboard data in a structured format
 type ClipboardContent struct {
+	ID        string
+	Timestamp time.Time
 	Type      ContentType
 	Text      string
 	Files     []string
@@ -83,6 +85,8 @@ func readClipboardDIBBytes(format uint32) ([]byte, error) {
 // Read reads the current clipboard content and returns it as ClipboardContent
 func Read() (ClipboardContent, error) {
 	var content ClipboardContent
+	content.ID = fmt.Sprintf("%d", time.Now().UnixNano())
+	content.Timestamp = time.Now()
 	startTime := time.Now()
 
 	// Open clipboard with retry/backoff
@@ -231,14 +235,13 @@ func Write(content ClipboardContent) error {
 			logger.Error("Failed to open clipboard for clearing: %v", err)
 			return err
 		}
+		defer closeClipboard()
 
 		if err := emptyClipboard(); err != nil {
 			logger.Error("Failed to empty clipboard: %v", err)
-			closeClipboard()
 			return err
 		}
 
-		closeClipboard()
 		lastWriteSeq.Store(GetClipboardSequenceNumber())
 		logger.Debug("Total Write() duration (clear): %v", time.Since(startTime))
 		return nil
@@ -408,12 +411,12 @@ func Write(content ClipboardContent) error {
 		}
 		return err
 	}
+	defer closeClipboard()
 	clipboardOpenTime = time.Now()
 
 	// Empty clipboard before writing
 	if err = emptyClipboard(); err != nil {
 		logger.Error("Failed to empty clipboard: %v", err)
-		closeClipboard()
 		// Free allocated memory if clipboard couldn't be emptied
 		if textHandle != 0 {
 			procGlobalFree.Call(textHandle)
@@ -433,7 +436,6 @@ func Write(content ClipboardContent) error {
 		ret, _, sysErr := procSetClipboardData.Call(CF_UNICODETEXT, textHandle)
 		if ret == 0 {
 			procGlobalFree.Call(textHandle)
-			closeClipboard()
 			if sysErr != nil && sysErr.Error() != "The operation completed successfully." {
 				logger.Error("Failed to write CF_UNICODETEXT: %v", sysErr)
 				return sysErr
@@ -443,7 +445,6 @@ func Write(content ClipboardContent) error {
 		ret, _, sysErr := procSetClipboardData.Call(CF_HDROP, filesHandle)
 		if ret == 0 {
 			procGlobalFree.Call(filesHandle)
-			closeClipboard()
 			if sysErr != nil && sysErr.Error() != "The operation completed successfully." {
 				logger.Error("Failed to write CF_HDROP: %v", sysErr)
 				return sysErr
@@ -453,15 +454,12 @@ func Write(content ClipboardContent) error {
 		ret, _, sysErr := procSetClipboardData.Call(CF_DIB, imageHandle)
 		if ret == 0 {
 			procGlobalFree.Call(imageHandle)
-			closeClipboard()
 			if sysErr != nil && sysErr.Error() != "The operation completed successfully." {
 				logger.Error("Failed to write CF_DIB: %v", sysErr)
 				return sysErr
 			}
 		}
 	}
-
-	closeClipboard()
 
 	// Update last write sequence number
 	lastWriteSeq.Store(GetClipboardSequenceNumber())

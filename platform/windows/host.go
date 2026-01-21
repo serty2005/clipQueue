@@ -10,6 +10,10 @@ import (
 	"github.com/serty2005/clipqueue/internal/logger"
 )
 
+type MacroExecutor interface {
+	ExecuteMacro(macro config.Macro) error
+}
+
 var (
 	user32               = syscall.NewLazyDLL("user32.dll")
 	procCreateWindowEx   = user32.NewProc("CreateWindowExW")
@@ -57,6 +61,7 @@ const (
 
 type Host struct {
 	cfg               *config.SafeConfig
+	controller        MacroExecutor
 	hwnd              uintptr
 	className         *uint16
 	running           bool
@@ -72,9 +77,11 @@ type Host struct {
 	hookHandle        uintptr       // Current hook handle
 }
 
-func NewHost(cfg *config.SafeConfig) (*Host, error) {
+func NewHost(cfg *config.SafeConfig, controller MacroExecutor) (*Host, error) {
+
 	host := &Host{
 		cfg:               cfg,
+		controller:        controller,
 		onToggleQueue:     func() {},
 		onPasteNext:       func() {},
 		onClipboardUpdate: func() {},
@@ -132,14 +139,8 @@ func (h *Host) UpdateTrayTooltip(text string) error {
 func (h *Host) RegisterMacro(hotkey string, macro config.Macro) error {
 	_, err := h.hotkeys.ParseAndRegister(hotkey, func() {
 		logger.Debug("Macro hotkey pressed: %s", hotkey)
-		if macro.Mode == "paste" {
-			if err := PasteString(macro.Text); err != nil {
-				logger.Error("Failed to paste text for macro %s: %v", hotkey, err)
-			}
-		} else { // default to "type" mode
-			if err := TypeString(macro.Text); err != nil {
-				logger.Error("Failed to type text for macro %s: %v", hotkey, err)
-			}
+		if err := h.controller.ExecuteMacro(macro); err != nil {
+			logger.Error("Failed to execute macro %s: %v", hotkey, err)
 		}
 	})
 	return err
@@ -219,10 +220,12 @@ func (h *Host) Start() error {
 			return
 		}
 
-		// Initialize system tray
-		h.tray = NewTray(h.hwnd)
-		if err := h.tray.Setup(""); err != nil {
-			logger.Error("Failed to initialize system tray: %v", err)
+		// Initialize system tray if not in silent mode
+		if !h.cfg.Get().App.Silent {
+			h.tray = NewTray(h.hwnd)
+			if err := h.tray.Setup(""); err != nil {
+				logger.Error("Failed to initialize system tray: %v", err)
+			}
 		}
 
 		// Notify that initialization was successful

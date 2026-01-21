@@ -16,23 +16,31 @@ import (
 )
 
 func main() {
-	// Initialize logger
-	if err := logger.Init(); err != nil {
+	// Load config first
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Printf("Failed to load config: %v\n", err)
+		return
+	}
+
+	// Hide console if silent mode is enabled
+	if cfg.App.Silent {
+		windows.HideConsole()
+	}
+
+	// Initialize logger with silent parameter
+	if err := logger.Init(cfg.App.Silent); err != nil {
 		fmt.Printf("Failed to initialize logger: %v\n", err)
 		return
 	}
 	defer logger.Close()
 
 	logger.Info("ClipQueue starting...")
-
-	// Load config
-	cfg, err := config.Load()
-	if err != nil {
-		logger.Error("Failed to load config: %v", err)
-		return
-	}
-
 	logger.Info("Config loaded successfully")
+
+	for key, macro := range cfg.Macros {
+		logger.Info("Loaded macro: %s -> Text len: %d, Mode: %s", key, len(macro.Text), macro.Mode)
+	}
 
 	// Wrap config for thread-safe access
 	safeCfg := config.NewSafeConfig(cfg)
@@ -41,27 +49,16 @@ func main() {
 	controller := app.NewController(safeCfg.Get())
 
 	// Create Windows host
-	host, err := windows.NewHost(safeCfg)
+	host, err := windows.NewHost(safeCfg, controller)
 	if err != nil {
 		logger.Error("Failed to create Windows host: %v", err)
 		return
 	}
 
 	// Create and start UI server
-	uiServer := server.NewServer(safeCfg, host)
+	uiServer := server.NewServer(safeCfg, host, controller)
 	if err := uiServer.Start(); err != nil {
 		logger.Error("Failed to start UI server: %v", err)
-		return
-	}
-	defer func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := uiServer.Stop(ctx); err != nil {
-			logger.Error("Failed to stop UI server: %v", err)
-		}
-	}()
-	if err != nil {
-		logger.Error("Failed to create Windows host: %v", err)
 		return
 	}
 
@@ -168,7 +165,7 @@ func main() {
 
 	<-sigChan
 
-	// Shutdown
+	// Shutdown - correct order: first host, then server
 	logger.Info("Host stopping...")
 	if err := host.Stop(); err != nil {
 		logger.Error("Failed to stop Windows host: %v", err)
@@ -176,6 +173,14 @@ func main() {
 
 	// Wait for host to complete cleanup
 	host.Wait()
+
+	// Stop UI server with increased timeout (10 seconds instead of 5)
+	logger.Info("Server stopping...")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := uiServer.Stop(ctx); err != nil {
+		logger.Error("Failed to stop UI server: %v", err)
+	}
 
 	logger.Info("ClipQueue stopped")
 }

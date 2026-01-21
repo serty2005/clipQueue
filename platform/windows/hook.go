@@ -194,6 +194,8 @@ func virtualKeyToString(vkCode uint32) string {
 		return "LAUNCHAPP1"
 	case VK_LAUNCH_APP2:
 		return "LAUNCHAPP2"
+	case 0xC0:
+		return "GRAVE"
 	}
 
 	return ""

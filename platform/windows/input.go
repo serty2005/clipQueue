@@ -30,10 +30,6 @@ func getAsyncKeyState(vkCode uint16) bool {
 	return result < 0 // If the most significant bit is set, the key is pressed
 }
 
-var (
-	procVkKeyScan = user32.NewProc("VkKeyScanW")
-)
-
 // INPUT represents the Windows INPUT structure for SendInput
 // https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-input
 // Size on x64 must be 40 bytes to match C union alignment
@@ -70,7 +66,7 @@ func sendInput(inputs []INPUT) uint32 {
 	return uint32(ret)
 }
 
-// TypeString sends text to the active window using physical keystrokes when possible
+// TypeString sends text to the active window using Unicode injection for all characters
 func TypeString(text string) error {
 	var inputs []INPUT
 
@@ -100,97 +96,25 @@ func TypeString(text string) error {
 	}
 
 	for _, r := range text {
-		// Check if character is ASCII or Unicode
-		if r < 128 {
-			// ASCII character - use VkKeyScanW method
-			res, _, _ := procVkKeyScan.Call(uintptr(r))
-			scanResult := int16(res)
+		utf16Char := uint16(r)
 
-			if scanResult != -1 {
-				// Extract VK code and modifiers
-				vkCode := uint16(scanResult & 0xFF)
-				modifiers := uint16(scanResult >> 8)
+		// Key down event
+		inputs = append(inputs, INPUT{
+			Type: INPUT_KEYBOARD,
+			Ki: KEYBDINPUT{
+				WScan:   utf16Char,
+				DwFlags: KEYEVENTF_UNICODE,
+			},
+		})
 
-				// Process modifiers (Shift, Ctrl, Alt)
-				var pressedModifiers []uint16
-				if modifiers&1 != 0 { // Shift
-					inputs = append(inputs, INPUT{
-						Type: INPUT_KEYBOARD,
-						Ki: KEYBDINPUT{
-							Wvk: VK_SHIFT,
-						},
-					})
-					pressedModifiers = append(pressedModifiers, VK_SHIFT)
-				}
-				if modifiers&2 != 0 { // Ctrl
-					inputs = append(inputs, INPUT{
-						Type: INPUT_KEYBOARD,
-						Ki: KEYBDINPUT{
-							Wvk: VK_CONTROL,
-						},
-					})
-					pressedModifiers = append(pressedModifiers, VK_CONTROL)
-				}
-				if modifiers&4 != 0 { // Alt
-					inputs = append(inputs, INPUT{
-						Type: INPUT_KEYBOARD,
-						Ki: KEYBDINPUT{
-							Wvk: VK_MENU,
-						},
-					})
-					pressedModifiers = append(pressedModifiers, VK_MENU)
-				}
-
-				// Key down
-				inputs = append(inputs, INPUT{
-					Type: INPUT_KEYBOARD,
-					Ki: KEYBDINPUT{
-						Wvk: vkCode,
-					},
-				})
-
-				// Key up
-				inputs = append(inputs, INPUT{
-					Type: INPUT_KEYBOARD,
-					Ki: KEYBDINPUT{
-						Wvk:     vkCode,
-						DwFlags: KEYEVENTF_KEYUP,
-					},
-				})
-
-				// Release modifiers in reverse order
-				for i := len(pressedModifiers) - 1; i >= 0; i-- {
-					inputs = append(inputs, INPUT{
-						Type: INPUT_KEYBOARD,
-						Ki: KEYBDINPUT{
-							Wvk:     pressedModifiers[i],
-							DwFlags: KEYEVENTF_KEYUP,
-						},
-					})
-				}
-			}
-		} else {
-			// Unicode character (e.g., Cyrillic) - use Unicode method only
-			utf16Char := uint16(r)
-
-			// Key down event
-			inputs = append(inputs, INPUT{
-				Type: INPUT_KEYBOARD,
-				Ki: KEYBDINPUT{
-					WScan:   utf16Char,
-					DwFlags: KEYEVENTF_UNICODE,
-				},
-			})
-
-			// Key up event
-			inputs = append(inputs, INPUT{
-				Type: INPUT_KEYBOARD,
-				Ki: KEYBDINPUT{
-					WScan:   utf16Char,
-					DwFlags: KEYEVENTF_UNICODE | KEYEVENTF_KEYUP,
-				},
-			})
-		}
+		// Key up event
+		inputs = append(inputs, INPUT{
+			Type: INPUT_KEYBOARD,
+			Ki: KEYBDINPUT{
+				WScan:   utf16Char,
+				DwFlags: KEYEVENTF_UNICODE | KEYEVENTF_KEYUP,
+			},
+		})
 	}
 
 	// Send inputs in chunks with delays for RDP sessions
@@ -216,43 +140,7 @@ func TypeString(text string) error {
 	return nil
 }
 
-// PasteString sends text to the active window using clipboard paste
-func PasteString(text string) error {
-	// Save current clipboard content
-	oldContent, err := Read()
-	if err != nil {
-		logger.Error("Failed to read current clipboard: %v", err)
-		return err
-	}
-
-	// Write text to clipboard
-	content := ClipboardContent{
-		Type: Text,
-		Text: text,
-	}
-	if err := Write(content); err != nil {
-		logger.Error("Failed to write text to clipboard: %v", err)
-		return err
-	}
-
-	// Send Ctrl+V to paste
-	if err := SendCtrlV(); err != nil {
-		logger.Error("Failed to send Ctrl+V: %v", err)
-		return err
-	}
-
-	// Wait for paste to complete
-	time.Sleep(150 * time.Millisecond)
-
-	// Restore original clipboard content
-	if err := Write(oldContent); err != nil {
-		logger.Error("Failed to restore clipboard: %v", err)
-		return err
-	}
-
-	return nil
-}
-
+// SendCtrlV sends the Ctrl+V keystroke combination to the system
 // SendCtrlV sends the Ctrl+V keystroke combination to the system
 func SendCtrlV() error {
 	// Create Ctrl+V keystroke sequence

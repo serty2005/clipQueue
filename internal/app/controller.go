@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -14,6 +15,7 @@ type Controller struct {
 	mu               sync.Mutex
 	queueEnabled     bool
 	queue            []windows.ClipboardContent
+	history          []windows.ClipboardContent // Stores last 50 clipboard items
 	snapshotOnEnable *windows.ClipboardContent
 	selfEventsRing   []uint32 // Ring buffer for self-event suppression
 	ringIndex        int      // Current index for ring buffer
@@ -130,38 +132,64 @@ func (c *Controller) ToggleQueue() {
 
 // OnClipboardUpdate handles clipboard update events
 func (c *Controller) OnClipboardUpdate() {
+	time.Sleep(50 * time.Millisecond)
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
-
-	if !c.queueEnabled {
-		logger.Debug("OnClipboardUpdate skipped - queue mode disabled")
-		return
-	}
 
 	// Check for self-event suppression
 	seq := windows.GetClipboardSequenceNumber()
 	if c.isSelfEvent(seq) {
-		logger.Debug("OnClipboardUpdate skipped - self-event (seq=%d)", seq)
+		logger.Debug("OnClipboardUpdate: пропущен самопоявление (seq=%d)", seq)
 		return
 	}
 
 	// Read clipboard content
 	content, err := windows.Read()
 	if err != nil {
-		logger.Error("Failed to read clipboard: %v", err)
+		logger.Error("OnClipboardUpdate: ошибка чтения буфера обмена - %v", err)
 		return
 	}
 
 	if content.Type == windows.Empty {
-		logger.Debug("OnClipboardUpdate skipped - empty clipboard content")
+		logger.Debug("OnClipboardUpdate: пропущен пустой контент")
 		return
 	}
 
-	// Add to queue
-	c.queue = append(c.queue, content)
-	logger.Info("Enqueued clipboard content (type=%s, size=%d bytes, preview=%q, queue length=%d)",
-		content.Type.String(), content.SizeBytes, content.Preview, len(c.queue))
-	c.onStateChange(c.queueEnabled, len(c.queue), c.orderStrategy)
+	// Deduplication check
+	if len(c.history) > 0 {
+		last := c.history[len(c.history)-1]
+		if content.Type == last.Type && content.Timestamp.Sub(last.Timestamp) < time.Second {
+			var contentMatch bool
+			if content.Type == windows.Text {
+				contentMatch = content.Text == last.Text
+			} else {
+				contentMatch = content.SizeBytes == last.SizeBytes
+			}
+			if contentMatch {
+				logger.Debug("OnClipboardUpdate: пропущен дубликат контента")
+				return
+			}
+		}
+	}
+
+	// Add to history with rotation (keep last 50)
+	if len(c.history) >= 50 {
+		c.history = c.history[1:]
+	}
+	c.history = append(c.history, content)
+	logger.Debug("OnClipboardUpdate: добавлено в историю (тип=%s, размер=%d байт, предпросмотр=%q, длина истории=%d)",
+		content.Type.String(), content.SizeBytes, content.Preview, len(c.history))
+
+	// Add to queue if enabled
+	if c.queueEnabled {
+		c.queue = append(c.queue, content)
+		logger.Info("OnClipboardUpdate: добавлено в очередь (тип=%s, размер=%d байт, предпросмотр=%q, длина очереди=%d)",
+			content.Type.String(), content.SizeBytes, content.Preview, len(c.queue))
+		c.onStateChange(c.queueEnabled, len(c.queue), c.orderStrategy)
+	} else {
+		logger.Debug("OnClipboardUpdate: не добавлено в очередь (очередь отключена)")
+	}
 }
 
 // PasteNext retrieves and pastes the next item from the clipboard queue
@@ -242,14 +270,82 @@ func (c *Controller) PasteNext() {
 	c.addSelfEvent(windows.GetClipboardSequenceNumber())
 }
 
+// GetQueue returns a copy of the clipboard queue with mutex protection
+func (c *Controller) GetQueue() []windows.ClipboardContent {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	queueCopy := make([]windows.ClipboardContent, len(c.queue))
+	copy(queueCopy, c.queue)
+	return queueCopy
+}
+
+// GetHistory returns a copy of the clipboard history with mutex protection
+func (c *Controller) GetHistory() []windows.ClipboardContent {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	historyCopy := make([]windows.ClipboardContent, len(c.history))
+	copy(historyCopy, c.history)
+	return historyCopy
+}
+
+// GetOrderStrategy returns the current order strategy
+func (c *Controller) GetOrderStrategy() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.orderStrategy
+}
+
+// SetOrderStrategy sets the queue order strategy (LIFO or FIFO)
+func (c *Controller) SetOrderStrategy(order string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if order != "LIFO" && order != "FIFO" {
+		return fmt.Errorf("не поддерживаемая стратегия порядка: %s. Допустимые значения: LIFO, FIFO", order)
+	}
+
+	if c.orderStrategy == order {
+		logger.Debug("SetOrderStrategy: стратегия уже установлена на %s", order)
+		return nil
+	}
+
+	c.orderStrategy = order
+	logger.Info("SetOrderStrategy: стратегия порядка изменена на %s", order)
+	c.onStateChange(c.queueEnabled, len(c.queue), c.orderStrategy)
+	return nil
+}
+
+// RemoveItem removes an item from the queue by index with mutex protection and index validation
+func (c *Controller) RemoveItem(index int) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if index < 0 || index >= len(c.queue) {
+		return fmt.Errorf("invalid index: %d, queue length: %d", index, len(c.queue))
+	}
+
+	// Remove the item by slicing
+	c.queue = append(c.queue[:index], c.queue[index+1:]...)
+	logger.Info("Removed item at index %d, queue length now: %d", index, len(c.queue))
+	c.onStateChange(c.queueEnabled, len(c.queue), c.orderStrategy)
+	return nil
+}
+
+// addSelfEventLocked adds a sequence number to the self-event suppression ring buffer
+// Предполагает, что мьютекс уже захвачен
+func (c *Controller) addSelfEventLocked(seq uint32) {
+	c.selfEventsRing[c.ringIndex] = seq
+	c.ringIndex = (c.ringIndex + 1) % c.ringSize
+	logger.Debug("Added self-event sequence number: %d", seq)
+}
+
 // addSelfEvent adds a sequence number to the self-event suppression ring buffer
 func (c *Controller) addSelfEvent(seq uint32) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-
-	c.selfEventsRing[c.ringIndex] = seq
-	c.ringIndex = (c.ringIndex + 1) % c.ringSize
-	logger.Debug("Added self-event sequence number: %d", seq)
+	c.addSelfEventLocked(seq)
 }
 
 // isSelfEvent checks if a sequence number is in the self-event suppression ring buffer
@@ -260,4 +356,88 @@ func (c *Controller) isSelfEvent(seq uint32) bool {
 		}
 	}
 	return false
+}
+
+// ExecuteMacro выполняет макрос с заданным текстом и режимом
+func (c *Controller) ExecuteMacro(macro config.Macro) error {
+	logger.Info("Executing macro with text: %q, mode: %s", macro.Text, macro.Mode)
+
+	switch macro.Mode {
+	case "type":
+		// Режим "type" - ввод текста символ за символом
+		err := windows.TypeString(macro.Text)
+		if err != nil {
+			logger.Error("Failed to type text: %v", err)
+			return err
+		}
+		logger.Debug("Macro executed in type mode")
+
+	case "paste":
+		// Режим "paste" - вставка через буфер обмена с сохранением и восстановлением текущего состояния
+		// Сохраняем текущий буфер обмена
+		oldContent, err := windows.Read()
+		if err != nil {
+			logger.Error("Failed to read current clipboard: %v", err)
+			return err
+		}
+
+		// Записываем текст макроса в буфер обмена
+		content := windows.ClipboardContent{
+			Type: windows.Text,
+			Text: macro.Text,
+		}
+		if err := windows.Write(content); err != nil {
+			logger.Error("Failed to write macro text to clipboard: %v", err)
+			return err
+		}
+		c.addSelfEvent(windows.GetClipboardSequenceNumber())
+
+		// Дайте время для обновления буфера обмена
+		time.Sleep(100 * time.Millisecond)
+
+		// Отправляем Ctrl+V для вставки
+		if err := windows.SendCtrlV(); err != nil {
+			logger.Error("Failed to send Ctrl+V: %v", err)
+			// Попытка восстановить буфер даже при ошибке
+			_ = windows.Write(oldContent)
+			c.addSelfEvent(windows.GetClipboardSequenceNumber())
+			return err
+		}
+
+		// Дожидаемся завершения вставки
+		time.Sleep(time.Duration(c.cfg.Clipboard.RestoreDelayMs) * time.Millisecond)
+
+		// Восстанавливаем исходный буфер обмена
+		if err := windows.Write(oldContent); err != nil {
+			logger.Error("Failed to restore clipboard: %v", err)
+			return err
+		}
+		c.addSelfEvent(windows.GetClipboardSequenceNumber())
+
+		logger.Debug("Macro executed in paste mode")
+
+	default:
+		return fmt.Errorf("unsupported macro mode: %s. Supported modes: type, paste", macro.Mode)
+	}
+
+	return nil
+}
+
+// CopyItem copies an item from history to clipboard by ID
+func (c *Controller) CopyItem(id string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for _, item := range c.history {
+		if item.ID == id {
+			err := windows.Write(item)
+			if err != nil {
+				return err
+			}
+			c.addSelfEventLocked(windows.GetClipboardSequenceNumber())
+			logger.Info("Copied item from history to clipboard (id=%s, type=%s)", id, item.Type.String())
+			return nil
+		}
+	}
+	return fmt.Errorf("item with id %s not found in history", id)
 }

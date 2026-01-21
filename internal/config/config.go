@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -15,36 +16,34 @@ type Macro struct {
 
 // UnmarshalYAML implements custom YAML unmarshaling for backward compatibility
 func (m *Macro) UnmarshalYAML(value *yaml.Node) error {
-	// Handle case 1: Macro is a string (old format)
-	var str string
-	if err := value.Decode(&str); err == nil {
-		m.Text = str
-		m.Mode = "type" // Default mode if not specified
-		return nil
-	}
-
-	// Handle case 2: Macro is an object (new format)
-	type Alias Macro // Create alias type to avoid recursion
-	alias := &struct {
-		*Alias
-	}{
-		Alias: (*Alias)(m),
-	}
-	if err := value.Decode(alias); err != nil {
-		return err
-	}
-
-	// Set default mode if not specified
-	if m.Mode == "" {
+	switch value.Kind {
+	case yaml.ScalarNode:
+		// Decode scalar node into Text and set Mode to "type"
+		if err := value.Decode(&m.Text); err != nil {
+			return err
+		}
 		m.Mode = "type"
+	case yaml.MappingNode:
+		type macroAlias Macro // Алиас, чтобы избежать рекурсии методов
+		var aux macroAlias
+		if err := value.Decode(&aux); err != nil {
+			return err
+		}
+		*m = Macro(aux)
+		// Set default mode if not specified
+		if m.Mode == "" {
+			m.Mode = "type"
+		}
+	default:
+		return fmt.Errorf("unsupported YAML node kind for Macro: %v", value.Kind)
 	}
-
 	return nil
 }
 
 type Config struct {
 	App struct {
 		DataDir string `yaml:"data_dir"`
+		Silent  bool   `yaml:"silent"`
 	} `yaml:"app"`
 	Hotkeys struct {
 		ToggleQueue string `yaml:"toggle_queue"`
@@ -109,6 +108,7 @@ func (sc *SafeConfig) Update(newCfg *Config) error {
 func defaultConfig() *Config {
 	cfg := &Config{}
 	cfg.App.DataDir = filepath.Join(os.Getenv("APPDATA"), "ClipQueue")
+	cfg.App.Silent = false
 	cfg.Hotkeys.ToggleQueue = "Alt+C"
 	cfg.Hotkeys.PasteNext = "Alt+V"
 	cfg.Clipboard.WatchDebounceMs = 30

@@ -1,6 +1,7 @@
 package logger
 
 import (
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -16,7 +17,7 @@ var (
 	initOnce      sync.Once
 )
 
-func Init() error {
+func Init(silent bool) error {
 	var err error
 
 	initOnce.Do(func() {
@@ -42,7 +43,11 @@ func Init() error {
 
 		// Initialize loggers
 		fileLogger = log.New(logFile, "", log.LstdFlags)
-		consoleLogger = log.New(os.Stdout, "", log.LstdFlags)
+		if silent {
+			consoleLogger = log.New(io.Discard, "", log.LstdFlags)
+		} else {
+			consoleLogger = log.New(os.Stdout, "", log.LstdFlags)
+		}
 	})
 
 	return err

@@ -59,6 +59,8 @@ var keyMap = map[string]uint32{
 	"AUDIOVOLUMEMUTE": 0xAD,
 	"AUDIOVOLUMEDOWN": 0xAE,
 	"AUDIOVOLUMEUP":   0xAF,
+	"GRAVE": 0xC0,
+	"TILDE": 0xC0,
 }
 
 type Hotkeys struct {

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/serty2005/clipqueue/internal/app"
 	"github.com/serty2005/clipqueue/internal/config"
 	"github.com/serty2005/clipqueue/internal/logger"
 )
@@ -16,14 +17,26 @@ import (
 //go:embed index.html
 var embedFS embed.FS
 
+// HistoryItemDTO represents a history item for API responses
+type HistoryItemDTO struct {
+	ID         string    `json:"id"`
+	Type       string    `json:"type"`
+	Preview    string    `json:"preview"`
+	Timestamp  time.Time `json:"timestamp"`
+	IsQueued   bool      `json:"isQueued"`
+	QueueIndex int       `json:"queueIndex"`
+	IsNext     bool      `json:"isNext"`
+}
+
 type Server struct {
 	httpServer     *http.Server
 	config         *config.SafeConfig
 	host           interface{} // Pointer to platform-specific host implementation
-	OnConfigUpdate func()      // Callback for config changes
+	controller     *app.Controller
+	OnConfigUpdate func() // Callback for config changes
 }
 
-func NewServer(cfg *config.SafeConfig, host interface{}) *Server {
+func NewServer(cfg *config.SafeConfig, host interface{}, controller *app.Controller) *Server {
 	mux := http.NewServeMux()
 
 	s := &Server{
@@ -31,14 +44,18 @@ func NewServer(cfg *config.SafeConfig, host interface{}) *Server {
 			Addr:    "127.0.0.1:0", // Используем случайный свободный порт
 			Handler: mux,
 		},
-		config: cfg,
-		host:   host,
+		config:     cfg,
+		host:       host,
+		controller: controller,
 	}
 
 	// Настраиваем маршруты
 	mux.HandleFunc("/", s.handleIndex)
 	mux.HandleFunc("/api/config", s.handleConfig)
 	mux.HandleFunc("/api/hotkeys/capture", s.handleCaptureHotkey)
+	mux.HandleFunc("/api/history", s.handleHistory)
+	mux.HandleFunc("/api/queue/clear", s.handleQueueClear)
+	mux.HandleFunc("/api/copy", s.handleCopy)
 
 	return s
 }
@@ -64,6 +81,11 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)
 			fmt.Fprintf(w, "Failed to update config: %v", err)
 			return
+		}
+
+		// Update order strategy
+		if err := s.controller.SetOrderStrategy(newCfg.Queue.DefaultOrder); err != nil {
+			logger.Warn("Failed to update order strategy: %v", err)
 		}
 
 		// Call the callback if set
@@ -135,6 +157,116 @@ func (s *Server) handleCaptureHotkey(w http.ResponseWriter, r *http.Request) {
 	// Return captured hotkey
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"hotkey": hotkey})
+}
+
+func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		// Get history items
+		history := s.controller.GetHistory()
+		queue := s.controller.GetQueue()
+		order := s.controller.GetOrderStrategy()
+		var items []HistoryItemDTO
+
+		// Create map for quick lookup in queue
+		queueMap := make(map[string]int) // id -> index
+		for i, item := range queue {
+			queueMap[item.ID] = i
+		}
+
+		// Determine next for paste
+		var nextID string
+		if len(queue) > 0 {
+			if order == "LIFO" {
+				nextID = queue[len(queue)-1].ID
+			} else {
+				nextID = queue[0].ID
+			}
+		}
+
+		for _, item := range history {
+			dto := HistoryItemDTO{
+				ID:        item.ID,
+				Type:      item.Type.String(),
+				Preview:   item.Preview,
+				Timestamp: item.Timestamp,
+			}
+			if idx, exists := queueMap[item.ID]; exists {
+				dto.IsQueued = true
+				dto.QueueIndex = idx
+			} else {
+				dto.IsQueued = false
+				dto.QueueIndex = -1
+			}
+			dto.IsNext = dto.IsQueued && item.ID == nextID
+			items = append(items, dto)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(items)
+		return
+	case http.MethodDelete:
+		// Delete item by index from queue
+		indexStr := r.URL.Query().Get("index")
+		if indexStr == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "index parameter required"})
+			return
+		}
+		var index int
+		if _, err := fmt.Sscanf(indexStr, "%d", &index); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "invalid index"})
+			return
+		}
+		if err := s.controller.RemoveItem(index); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"message": "item removed"})
+		return
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
+		return
+	}
+}
+
+func (s *Server) handleQueueClear(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
+		return
+	}
+
+	s.controller.ClearQueue()
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"message": "queue cleared"})
+}
+
+func (s *Server) handleCopy(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
+		return
+	}
+
+	idStr := r.URL.Query().Get("id")
+	if idStr == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "id parameter required"})
+		return
+	}
+
+	if err := s.controller.CopyItem(idStr); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"message": "item copied to clipboard"})
 }
 
 func (s *Server) GetURL() string {

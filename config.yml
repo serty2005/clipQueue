@@ -1,45 +1,19 @@
 app:
-    data_dir: C:\Users\SERTY\AppData\Roaming\ClipQueue
+    data_dir: .
+    silent: false
 hotkeys:
     toggle_queue: CTRL+ALT+C
     paste_next: CTRL+ALT+V
 clipboard:
-    watch_debounce_ms: 15
-    paste_delay_ms: 40
-    restore_delay_ms: 300
+    watch_debounce_ms: 30
+    paste_delay_ms: 50
+    restore_delay_ms: 1000
 queue:
-    default_order: LIFO
+    default_order: FIFO
 macros:
-    ALT+4:
-        text: 21321ewqe123wqe
-        mode: type
-    ALT+Q:
-        text: dsaasdwqeqw
-        mode: type
-    AUDIOVOLUMEUP:
-        text: mhrcadmin99452
-        mode: type
-    CTRL+3:
-        text: sadasdwq2121
-        mode: type
-    CTRL+ALT+A:
-        text: ццццууу12312dfdfdf
-        mode: type
-    CTRL+ALT+W:
-        text: 2123цйуйцу21312www
+    CTRL+ALT+Q:
+        text: 213цйуйцwqeqw211
         mode: paste
-    CTRL+SHIFT+M:
-        text: Test-123-Привет
-        mode: type
-    Ctrl+Alt+Z:
-        text: "Можно использовать любые символы: \U0001F60A \U0001F30D 日本語"
-        mode: type
-    Ctrl+S:
-        text: mhrcadmin994525
-        mode: type
-    Ctrl+Shift+S:
-        text: Спасибо за внимание!
-        mode: type
-    VOLUMEDOWN:
-        text: mhrcadmin994525111
+    CTRL+ALT+W:
+        text: 21312цйуйцуwqeqw
         mode: type
