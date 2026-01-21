@@ -404,6 +404,133 @@
             display: block;
         }
 
+        /* Pipeline Visualization Styles */
+        .pipeline-container {
+            display: flex;
+            gap: 20px;
+            flex-wrap: nowrap;
+            overflow-x: auto;
+            padding: 20px 0;
+            min-height: 200px;
+        }
+
+        .step-card {
+            background-color: #3d3d3d;
+            border: 1px solid #555;
+            border-radius: 8px;
+            padding: 16px;
+            min-width: 250px;
+            flex-shrink: 0;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+            transition: all 0.2s ease;
+        }
+
+        .step-card:hover {
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+            transform: translateY(-2px);
+        }
+
+        .step-card h3 {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            color: #667eea;
+        }
+
+        .step-input {
+            margin-bottom: 12px;
+        }
+
+        .step-input input {
+            width: 100%;
+            padding: 8px 12px;
+            font-size: 14px;
+            background-color: #4d4d4d;
+            border: 1px solid #666;
+            border-radius: 6px;
+            color: #e0e0e0;
+            font-family: monospace;
+        }
+
+        .step-input input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .arguments-list {
+            margin-bottom: 12px;
+        }
+
+        .argument-item {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 8px;
+            align-items: center;
+        }
+
+        .argument-item input {
+            flex: 1;
+            padding: 6px 10px;
+            font-size: 13px;
+            background-color: #4d4d4d;
+            border: 1px solid #666;
+            border-radius: 6px;
+            color: #e0e0e0;
+            font-family: monospace;
+        }
+
+        .operator-select {
+            width: 100%;
+            padding: 8px 12px;
+            font-size: 14px;
+            background-color: #4d4d4d;
+            border: 1px solid #666;
+            border-radius: 6px;
+            color: #e0e0e0;
+            margin-bottom: 12px;
+            cursor: pointer;
+        }
+
+        .operator-select option {
+            background-color: #3d3d3d;
+        }
+
+        .step-actions {
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+        }
+
+        .pipeline-connector {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 40px;
+            color: #667eea;
+            font-size: 24px;
+            font-weight: bold;
+        }
+
+        .preview-section {
+            margin-top: 32px;
+            border-top: 1px solid #444;
+            padding-top: 24px;
+        }
+
+        .preview-section textarea {
+            background-color: #2d2d2d;
+            border: 1px solid #555;
+            color: #e0e0e0;
+            font-family: monospace;
+            resize: vertical;
+            min-height: 100px;
+        }
+
+        .copy-button {
+            margin-top: 12px;
+        }
+
         @media (max-width: 640px) {
             body {
                 padding: 10px;
@@ -432,6 +559,10 @@
             .tab-button {
                 padding: 10px 16px;
             }
+
+            .step-card {
+                min-width: 200px;
+            }
         }
     </style>
 </head>
@@ -445,6 +576,7 @@
             <div class="tabs">
                 <button class="tab-button active" onclick="switchTab('settings')">Настройки</button>
                 <button class="tab-button" onclick="switchTab('queue')">Очередь</button>
+                <button class="tab-button" onclick="switchTab('lab')">Лаборатория</button>
             </div>
 
             <div id="tab-settings" class="tab-content active">
@@ -544,6 +676,32 @@
                             <tbody id="historyBody">
                             </tbody>
                         </table>
+                    </div>
+                </div>
+            </div>
+
+            <div id="tab-lab" class="tab-content">
+                <div class="section">
+                    <h2 class="section-title">Лаборатория Команд</h2>
+                    
+                    <div class="form-group">
+                        <label for="commandInput">Введите команду для анализа</label>
+                        <textarea id="commandInput" class="form-control" placeholder="Пример: select text between \"[\" and \"]\" | extract numbers | sort"></textarea>
+                    </div>
+
+                    <div style="display: flex; gap: 12px; margin-bottom: 24px;">
+                        <button class="btn btn-primary" onclick="parseCommand()">Анализировать Команду</button>
+                        <button class="btn btn-secondary" onclick="rebuildCommand()">Перестроить Команду</button>
+                    </div>
+
+                    <div class="pipeline-container" id="pipelineContainer">
+                        <!-- Pipeline cards will be rendered here -->
+                    </div>
+
+                    <div class="preview-section">
+                        <label for="resultOutput">Результат</label>
+                        <textarea id="resultOutput" class="form-control" readonly placeholder="Результат будет отображен здесь"></textarea>
+                        <button class="btn btn-primary copy-button" onclick="copyLabResult()">Скопировать Результат</button>
                     </div>
                 </div>
             </div>
@@ -1063,6 +1221,173 @@
             if (historyRefreshInterval) {
                 clearInterval(historyRefreshInterval);
                 historyRefreshInterval = null;
+            }
+        }
+
+        // Лаборатория Команд functions
+        async function parseCommand() {
+            const command = document.getElementById('commandInput').value.trim();
+            if (!command) {
+                showStatus('Введите команду для анализа', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/lab/parse', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ command: command })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Не удалось разобрать команду');
+                }
+
+                const data = await response.json();
+                renderPipeline(data);
+                showStatus('Команда успешно разобрана', 'success');
+            } catch (error) {
+                showStatus('Ошибка разбора команды: ' + error.message, 'error');
+            }
+        }
+
+        function renderPipeline(data) {
+            const container = document.getElementById('pipelineContainer');
+            container.innerHTML = '';
+
+            if (!data || !data.steps || data.steps.length === 0) {
+                container.innerHTML = '<div style="color: #666; padding: 20px;">Пайплайн пуст</div>';
+                return;
+            }
+
+            data.steps.forEach((step, index) => {
+                if (index > 0) {
+                    const connector = document.createElement('div');
+                    connector.className = 'pipeline-connector';
+                    connector.textContent = '→';
+                    container.appendChild(connector);
+                }
+
+                const card = document.createElement('div');
+                card.className = 'step-card';
+                card.innerHTML = `
+                    <h3>Шаг ${index + 1}: ${step.operator}</h3>
+                    <div class="step-input">
+                        <input type="text" placeholder="Входные данные" value="${escapeHtml(step.command || '')}">
+                    </div>
+                    <div class="arguments-list" id="args-${index}">
+                        ${step.args.map((arg, argIndex) => `
+                            <div class="argument-item">
+                                <input type="text" placeholder="Аргумент" value="${escapeHtml(arg)}">
+                                <button class="btn btn-danger" onclick="removeArgument(${index}, ${argIndex})">Удалить</button>
+                            </div>
+                        `).join('')}
+                    </div>
+                    <button class="btn btn-success" onclick="addArgument(${index})">Добавить Аргумент</button>
+                    <select class="operator-select">
+                        <option value="select">Select</option>
+                        <option value="extract">Extract</option>
+                        <option value="sort">Sort</option>
+                        <option value="filter">Filter</option>
+                        <option value="replace">Replace</option>
+                        <option value="trim">Trim</option>
+                    </select>
+                    <div class="step-actions">
+                        <button class="btn btn-danger" onclick="removeStep(${index})">Удалить</button>
+                    </div>
+                `;
+
+                container.appendChild(card);
+            });
+        }
+
+        async function rebuildCommand() {
+            const steps = [];
+            const cards = document.querySelectorAll('.step-card');
+
+            cards.forEach(card => {
+                const operator = card.querySelector('.operator-select').value;
+                const input = card.querySelector('.step-input input').value;
+                const argumentsInputs = card.querySelectorAll('.arguments-list input');
+                const args = Array.from(argumentsInputs).map(input => input.value.trim()).filter(arg => arg);
+
+                steps.push({
+                    operator: operator,
+                    command: input,
+                    args: args
+                });
+            });
+
+            try {
+                const response = await fetch('/api/lab/build', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ steps: steps })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Не удалось перестроить команду');
+                }
+
+                const data = await response.json();
+                document.getElementById('commandInput').value = data.command;
+                document.getElementById('resultOutput').value = data.result || '';
+                showStatus('Команда успешно перестроена', 'success');
+            } catch (error) {
+                showStatus('Ошибка перестройки команды: ' + error.message, 'error');
+            }
+        }
+
+        async function copyLabResult() {
+            const result = document.getElementById('resultOutput').value;
+            if (!result) {
+                showStatus('Нет результата для копирования', 'error');
+                return;
+            }
+
+            try {
+                await navigator.clipboard.writeText(result);
+                showStatus('Результат скопирован в буфер обмена', 'success');
+            } catch (error) {
+                showStatus('Ошибка копирования: ' + error.message, 'error');
+            }
+        }
+
+        function removeStep(index) {
+            const container = document.getElementById('pipelineContainer');
+            const cards = Array.from(container.querySelectorAll('.step-card'));
+
+            if (index >= 0 && index < cards.length) {
+                const card = cards[index];
+                if (index > 0) {
+                    const connector = container.childNodes[container.childNodes.indexOf(card) - 1];
+                    container.removeChild(connector);
+                }
+                container.removeChild(card);
+                showStatus('Шаг удален', 'success');
+            }
+        }
+
+        function addArgument(stepIndex) {
+            const argsList = document.getElementById(`args-${stepIndex}`);
+            const argIndex = argsList.children.length;
+            const newArg = document.createElement('div');
+            newArg.className = 'argument-item';
+            newArg.innerHTML = `
+                <input type="text" placeholder="Аргумент" value="">
+                <button class="btn btn-danger" onclick="removeArgument(${stepIndex}, ${argIndex})">Удалить</button>
+            `;
+            argsList.appendChild(newArg);
+        }
+
+        function removeArgument(stepIndex, argIndex) {
+            const argsList = document.getElementById(`args-${stepIndex}`);
+            if (argsList.children[argIndex]) {
+                argsList.removeChild(argsList.children[argIndex]);
             }
         }
 

@@ -12,6 +12,7 @@ import (
 	"github.com/serty2005/clipqueue/internal/app"
 	"github.com/serty2005/clipqueue/internal/config"
 	"github.com/serty2005/clipqueue/internal/logger"
+	"github.com/serty2005/clipqueue/internal/parser"
 )
 
 //go:embed index.html
@@ -26,6 +27,34 @@ type HistoryItemDTO struct {
 	IsQueued   bool      `json:"isQueued"`
 	QueueIndex int       `json:"queueIndex"`
 	IsNext     bool      `json:"isNext"`
+}
+
+// CommandStepDTO represents a single step in a command pipeline for API
+type CommandStepDTO struct {
+	Command  string   `json:"command"`
+	Args     []string `json:"args"`
+	Operator string   `json:"operator"`
+}
+
+// PipelineDTO represents the parsed command structure for API
+type PipelineDTO struct {
+	Steps    []CommandStepDTO `json:"steps"`
+	Original string           `json:"original"`
+}
+
+// ParseRequest is the request body for parsing a command
+type ParseRequest struct {
+	Command string `json:"command"`
+}
+
+// BuildRequest is the request body for building a command from steps
+type BuildRequest struct {
+	Steps []CommandStepDTO `json:"steps"`
+}
+
+// BuildResponse is the response body containing the built command
+type BuildResponse struct {
+	Command string `json:"command"`
 }
 
 type Server struct {
@@ -56,6 +85,10 @@ func NewServer(cfg *config.SafeConfig, host interface{}, controller *app.Control
 	mux.HandleFunc("/api/history", s.handleHistory)
 	mux.HandleFunc("/api/queue/clear", s.handleQueueClear)
 	mux.HandleFunc("/api/copy", s.handleCopy)
+
+	// Lab API routes
+	mux.HandleFunc("/api/lab/parse", s.handleLabParse)
+	mux.HandleFunc("/api/lab/build", s.handleLabBuild)
 
 	return s
 }
@@ -267,6 +300,80 @@ func (s *Server) handleCopy(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"message": "item copied to clipboard"})
+}
+
+func (s *Server) handleLabParse(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
+		return
+	}
+
+	var req ParseRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request body"})
+		return
+	}
+
+	pipeline, err := parser.Parse(req.Command)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("Parse error: %v", err)})
+		return
+	}
+
+	// Convert to DTO
+	dto := PipelineDTO{
+		Original: pipeline.Original,
+		Steps:    make([]CommandStepDTO, len(pipeline.Steps)),
+	}
+
+	for i, step := range pipeline.Steps {
+		dto.Steps[i] = CommandStepDTO{
+			Command:  step.Command,
+			Args:     step.Args,
+			Operator: step.Operator,
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(dto)
+}
+
+func (s *Server) handleLabBuild(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
+		return
+	}
+
+	var req BuildRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request body"})
+		return
+	}
+
+	// Convert from DTO
+	steps := make([]parser.CommandStep, len(req.Steps))
+	for i, step := range req.Steps {
+		steps[i] = parser.CommandStep{
+			Command:  step.Command,
+			Args:     step.Args,
+			Operator: step.Operator,
+		}
+	}
+
+	pipeline := parser.Pipeline{Steps: steps}
+	builtCommand := pipeline.String()
+
+	resp := BuildResponse{
+		Command: builtCommand,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
 
 func (s *Server) GetURL() string {
