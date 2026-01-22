@@ -583,7 +583,7 @@
                 <div class="section">
                 <h2 class="section-title">Основные Настройки</h2>
 
-                <div class="form-group">
+                <div class="form-group" id="group-toggleQueue">
                     <label for="toggleQueue">Горячая клавиша для открытия/закрытия очереди</label>
                     <div style="display: flex; gap: 8px;">
                         <input type="text" id="toggleQueue" class="hotkey-input" placeholder="Кнопка для бинда ->" readonly>
@@ -591,7 +591,7 @@
                     </div>
                 </div>
 
-                <div class="form-group">
+                <div class="form-group" id="group-pasteNext">
                     <label for="pasteNext">Горячая клавиша для вставки следующего элемента</label>
                     <div style="display: flex; gap: 8px;">
                         <input type="text" id="pasteNext" class="hotkey-input" placeholder="Кнопка для бинда ->" readonly>
@@ -599,7 +599,7 @@
                     </div>
                 </div>
 
-                <div class="form-group">
+                <div class="form-group" id="group-defaultOrder">
                     <label for="defaultOrder">Порядок очереди по умолчанию</label>
                     <select id="defaultOrder" class="form-control">
                         <option value="LIFO">LIFO (Последний добавленный - первый выведен)</option>
@@ -607,23 +607,51 @@
                     </select>
                 </div>
 
-                <div class="form-group">
+                <div class="form-group" id="group-watchDebounce">
                     <label for="watchDebounce">Задержка при отслеживании буфера (мс)</label>
                     <input type="number" id="watchDebounce" class="form-control" min="1" max="1000">
                 </div>
 
-                <div class="form-group">
+                <div class="form-group" id="group-pasteDelay">
                     <label for="pasteDelay">Задержка при вставке (мс)</label>
                     <input type="number" id="pasteDelay" class="form-control" min="1" max="2000">
                 </div>
 
-                <div class="form-group">
+                <div class="form-group" id="group-restoreDelay">
                     <label for="restoreDelay">Задержка при восстановлении буфера (мс)</label>
                     <input type="number" id="restoreDelay" class="form-control" min="100" max="5000">
                 </div>
             </div>
 
             <div class="section">
+                <h2 class="section-title">Feature Flags</h2>
+
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="enableQueue"> Enable Queue
+                    </label>
+                </div>
+
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="enableClipboard"> Enable Clipboard
+                    </label>
+                </div>
+
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="enableMacros"> Enable Macros
+                    </label>
+                </div>
+
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="enableLab"> Enable Lab
+                    </label>
+                </div>
+            </div>
+
+            <div class="section" id="macrosSection">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
                     <h2 class="section-title">Макросы</h2>
                     <button class="btn btn-primary" onclick="openMacroModal()">
@@ -737,7 +765,6 @@
                         <option value="type">Посимвольный ввод (Type)</option>
                         <option value="paste">Вставка через буфер (Paste)</option>
                         <option value="type_hw">Посимвольный ввод (Hardware/RDP)</option>
-                        <option value="sequence">Последовательность (Sequence)</option>
                     </select>
                 </div>
             </div>
@@ -769,6 +796,14 @@
                     throw new Error('Не удалось загрузить настройки');
                 }
                 config = await response.json();
+                if (!config.features) {
+                    config.features = {
+                        enableQueue: true,
+                        enableClipboard: true,
+                        enableMacros: true,
+                        enableLab: true
+                    };
+                }
                 populateForm();
             } catch (error) {
                 showStatus('Ошибка загрузки настроек: ' + error.message, 'error');
@@ -777,24 +812,72 @@
 
         // Заполнение формы данными конфигурации
         function populateForm() {
-            if (config && config.Hotkeys) {
-                document.getElementById('toggleQueue').value = config.Hotkeys.ToggleQueue || '';
-                document.getElementById('pasteNext').value = config.Hotkeys.PasteNext || '';
+            if (config && config.hotkeys) {
+                document.getElementById('toggleQueue').value = config.hotkeys.toggleQueueDisplay || config.hotkeys.toggleQueue || '';
+                document.getElementById('pasteNext').value = config.hotkeys.pasteNextDisplay || config.hotkeys.pasteNext || '';
+                document.getElementById('toggleQueue').dataset.originalSignature = config.hotkeys.toggleQueue || '';
+                document.getElementById('pasteNext').dataset.originalSignature = config.hotkeys.pasteNext || '';
             }
-            if (config && config.Queue) {
-                document.getElementById('defaultOrder').value = config.Queue.DefaultOrder || 'LIFO';
+            if (config && config.queue) {
+                document.getElementById('defaultOrder').value = config.queue.defaultOrder || 'LIFO';
             }
-            if (config && config.Clipboard) {
-                document.getElementById('watchDebounce').value = config.Clipboard.WatchDebounceMs || 30;
-                document.getElementById('pasteDelay').value = config.Clipboard.PasteDelayMs || 150;
-                document.getElementById('restoreDelay').value = config.Clipboard.RestoreDelayMs || 1000;
+            if (config && config.clipboard) {
+                document.getElementById('watchDebounce').value = config.clipboard.watchDebounceMs || 30;
+                document.getElementById('pasteDelay').value = config.clipboard.pasteDelayMs || 150;
+                document.getElementById('restoreDelay').value = config.clipboard.restoreDelayMs || 1000;
             }
-            if (!config.Macros) {
-                config.Macros = [];
+            if (!config.macros) {
+                config.macros = [];
             }
-            if (config && config.Macros) {
+            if (config && config.macros) {
                 populateMacrosTable();
             }
+            if (config && config.features) {
+                document.getElementById('enableQueue').checked = config.features.enableQueue;
+                document.getElementById('enableClipboard').checked = config.features.enableClipboard;
+                document.getElementById('enableMacros').checked = config.features.enableMacros;
+                document.getElementById('enableLab').checked = config.features.enableLab;
+                // Скрытие/показ табов на основе Features
+                const queueTab = document.querySelector('.tab-button[onclick="switchTab(\'queue\')"]');
+                const labTab = document.querySelector('.tab-button[onclick="switchTab(\'lab\')"]');
+                queueTab.style.display = config.features.enableQueue ? 'block' : 'none';
+                labTab.style.display = config.features.enableLab ? 'block' : 'none';
+                // Скрытие секции макросов
+                const macrosSection = document.getElementById('macrosSection');
+                macrosSection.style.display = config.features.enableMacros ? 'block' : 'none';
+            }
+            updateVisibility();
+
+            // Добавление обработчиков onchange для мгновенного обновления видимости
+            document.getElementById('enableQueue').addEventListener('change', function() {
+                config.features.enableQueue = this.checked;
+                updateVisibility();
+            });
+            document.getElementById('enableClipboard').addEventListener('change', function() {
+                config.features.enableClipboard = this.checked;
+                updateVisibility();
+            });
+        }
+
+        // Функция управления видимостью групп настроек
+        function updateVisibility() {
+            const enableQueue = config.features.enableQueue;
+            const enableClipboard = config.features.enableClipboard;
+
+            // Скрывать group-toggleQueue, group-pasteNext, group-defaultOrder если !enableQueue
+            const queueGroups = ['group-toggleQueue', 'group-pasteNext', 'group-defaultOrder'];
+            queueGroups.forEach(id => {
+                document.getElementById(id).style.display = enableQueue ? 'block' : 'none';
+            });
+
+            // Скрывать group-watchDebounce если !enableClipboard
+            document.getElementById('group-watchDebounce').style.display = enableClipboard ? 'block' : 'none';
+
+            // Скрывать group-pasteDelay и group-restoreDelay если !(enableClipboard || enableQueue)
+            const delayGroups = ['group-pasteDelay', 'group-restoreDelay'];
+            delayGroups.forEach(id => {
+                document.getElementById(id).style.display = (enableClipboard || enableQueue) ? 'block' : 'none';
+            });
         }
 
         // Заполнение таблицы макросов
@@ -802,7 +885,7 @@
             const tbody = document.getElementById('macrosBody');
             tbody.innerHTML = '';
 
-            config.Macros.forEach(macro => {
+            config.macros.forEach(macro => {
                 const row = document.createElement('tr');
                 const modeText = macro.mode === 'paste' ? 'Вставка через буфер' : 'Посимвольный ввод';
                 row.innerHTML = `
@@ -931,7 +1014,7 @@
 
             if (signature) {
                 title.textContent = 'Редактировать Макрос';
-                const macro = config.Macros.find(m => m.signature === signature);
+                const macro = config.macros.find(m => m.signature === signature);
                 if (macro) {
                     document.getElementById('macroName').value = macro.name || '';
                     document.getElementById('macroHotkey').value = macro.hotkey || '';
@@ -991,16 +1074,16 @@
 
             if (editingHotkey) {
                 // Редактирование: найти индекс по старой сигнатуре и обновить
-                const index = config.Macros.findIndex(m => m.signature === editingHotkey);
+                const index = config.macros.findIndex(m => m.signature === editingHotkey);
                 if (index !== -1) {
-                    config.Macros[index] = newMacroObject;
+                    config.macros[index] = newMacroObject;
                 } else {
                     // Если не найден, добавить
-                    config.Macros.push(newMacroObject);
+                    config.macros.push(newMacroObject);
                 }
             } else {
                 // Создание: добавить в массив
-                config.Macros.push(newMacroObject);
+                config.macros.push(newMacroObject);
             }
             populateMacrosTable();
             closeMacroModal();
@@ -1019,9 +1102,9 @@
                 return;
             }
 
-            const index = config.Macros.findIndex(m => m.signature === signature);
+            const index = config.macros.findIndex(m => m.signature === signature);
             if (index !== -1) {
-                config.Macros.splice(index, 1);
+                config.macros.splice(index, 1);
                 populateMacrosTable();
                 showStatus('Макрос удален', 'success');
             }
@@ -1033,15 +1116,23 @@
                 const toggleInput = document.getElementById('toggleQueue');
                 const pasteInput = document.getElementById('pasteNext');
 
-                // Берем сигнатуру из dataset (если был новый захват) 
-                // или текущее значение (если не меняли или это старый текстовый формат)
-                config.Hotkeys.ToggleQueue = toggleInput.dataset.signature || toggleInput.value;
-                config.Hotkeys.PasteNext = pasteInput.dataset.signature || pasteInput.value;
-                
-                config.Queue.DefaultOrder = document.getElementById('defaultOrder').value;
-                config.Clipboard.WatchDebounceMs = parseInt(document.getElementById('watchDebounce').value);
-                config.Clipboard.PasteDelayMs = parseInt(document.getElementById('pasteDelay').value);
-                config.Clipboard.RestoreDelayMs = parseInt(document.getElementById('restoreDelay').value);
+                // Берем сигнатуру из dataset (если был новый захват)
+                // или старое значение из config
+                config.hotkeys.toggleQueue = toggleInput.dataset.signature || config.hotkeys.toggleQueue;
+                config.hotkeys.toggleQueueDisplay = toggleInput.value;
+                config.hotkeys.pasteNext = pasteInput.dataset.signature || config.hotkeys.pasteNext;
+                config.hotkeys.pasteNextDisplay = pasteInput.value;
+
+                config.queue.defaultOrder = document.getElementById('defaultOrder').value;
+                config.clipboard.watchDebounceMs = parseInt(document.getElementById('watchDebounce').value);
+                config.clipboard.pasteDelayMs = parseInt(document.getElementById('pasteDelay').value);
+                config.clipboard.restoreDelayMs = parseInt(document.getElementById('restoreDelay').value);
+
+                if (!config.features) config.features = {};
+                config.features.enableQueue = document.getElementById('enableQueue').checked;
+                config.features.enableClipboard = document.getElementById('enableClipboard').checked;
+                config.features.enableMacros = document.getElementById('enableMacros').checked;
+                config.features.enableLab = document.getElementById('enableLab').checked;
 
                 const response = await fetch('/api/config', {
                     method: 'POST',
@@ -1056,11 +1147,12 @@
                 }
 
                 showStatus('Настройки сохранены успешно', 'success');
-                
+                populateForm();
+
                 // Очищаем dataset после сохранения, чтобы интерфейс оставался чистым
                 toggleInput.removeAttribute('data-signature');
                 pasteInput.removeAttribute('data-signature');
-                
+
             } catch (error) {
                 showStatus('Ошибка при сохранении настроек: ' + error.message, 'error');
             }
@@ -1197,7 +1289,7 @@
                 const response = await fetch('/api/config');
                 if (response.ok) {
                     const config = await response.json();
-                    const mode = config.Queue ? config.Queue.DefaultOrder : 'LIFO';
+                    const mode = config.queue ? config.queue.defaultOrder : 'LIFO';
                     document.getElementById('historyTitle').textContent = `История буфера (${mode})`;
                 }
             } catch (error) {

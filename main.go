@@ -95,36 +95,38 @@ func main() {
 	})
 
 	// Setup clipboard update coalescing worker
-	clipEvents := make(chan struct{}, 1)
-	go func() {
-		for range clipEvents {
-			// Debounce
-			time.Sleep(time.Duration(cfg.Clipboard.WatchDebounceMs) * time.Millisecond)
-			// Drain extra events
-		drainLoop:
-			for {
-				select {
-				case <-clipEvents:
-					// Skip extra event
-				default:
-					break drainLoop
+	if cfg.Features.EnableClipboard || cfg.Features.EnableQueue {
+		clipEvents := make(chan struct{}, 1)
+		go func() {
+			for range clipEvents {
+				// Debounce
+				time.Sleep(time.Duration(cfg.Clipboard.WatchDebounceMs) * time.Millisecond)
+				// Drain extra events
+			drainLoop:
+				for {
+					select {
+					case <-clipEvents:
+						// Skip extra event
+					default:
+						break drainLoop
+					}
 				}
+
+				// Process clipboard update
+				controller.OnClipboardUpdate()
 			}
+		}()
 
-			// Process clipboard update
-			controller.OnClipboardUpdate()
-		}
-	}()
-
-	host.OnClipboardUpdate(func() {
-		logger.Debug("WM_CLIPBOARDUPDATE received")
-		// Non-blocking send to clipEvents channel
-		select {
-		case clipEvents <- struct{}{}:
-		default:
-			// Skip if channel is full (already has pending event)
-		}
-	})
+		host.OnClipboardUpdate(func() {
+			logger.Debug("WM_CLIPBOARDUPDATE received")
+			// Non-blocking send to clipEvents channel
+			select {
+			case clipEvents <- struct{}{}:
+			default:
+				// Skip if channel is full (already has pending event)
+			}
+		})
+	}
 
 	// Wait for shutdown signal
 	sigChan := make(chan os.Signal, 1)

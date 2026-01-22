@@ -131,53 +131,59 @@ func (h *Host) registerConfiguredHotkeys() {
 	matcher := h.inputListener.GetMatcher()
 
 	// ToggleQueue
-	hotkeyStr := cfg.Hotkeys.ToggleQueue
-	sig := h.parseHotkeyToSignature(hotkeyStr)
-	if sig == nil {
-		hotkeyStr = "Alt+C"
-		sig = h.parseHotkeyToSignature(hotkeyStr)
-	}
-	if sig != nil {
-		matcher.Register(*sig, "toggle_queue", func() {
-			h.onToggleQueue()
-		})
-		logger.Info("Успешная регистрация хоткея ToggleQueue: %s", hotkeyStr)
-	} else {
-		logger.Error("Не удалось зарегистрировать хоткей ToggleQueue: %s", cfg.Hotkeys.ToggleQueue)
-	}
-
-	// PasteNext
-	hotkeyStr = cfg.Hotkeys.PasteNext
-	sig = h.parseHotkeyToSignature(hotkeyStr)
-	if sig == nil {
-		hotkeyStr = "Alt+V"
-		sig = h.parseHotkeyToSignature(hotkeyStr)
-	}
-	if sig != nil {
-		matcher.Register(*sig, "paste_next", func() {
-			h.onPasteNext()
-		})
-		logger.Info("Успешная регистрация хоткея PasteNext: %s", hotkeyStr)
-	} else {
-		logger.Error("Не удалось зарегистрировать хоткей PasteNext: %s", cfg.Hotkeys.PasteNext)
-	}
-
-	// Макросы
-	for _, macro := range cfg.Macros {
-		m := macro
-		hotkeyStr := macro.Signature
+	if cfg.Features.EnableQueue {
+		hotkeyStr := cfg.Hotkeys.ToggleQueue
 		sig := h.parseHotkeyToSignature(hotkeyStr)
-		if macro.Signature == "" || sig == nil {
-			hotkeyStr = macro.Hotkey
+		if sig == nil {
+			hotkeyStr = "Alt+C"
 			sig = h.parseHotkeyToSignature(hotkeyStr)
 		}
 		if sig != nil {
-			matcher.Register(*sig, "macro:"+hotkeyStr, func() {
-				h.controller.ExecuteMacro(m)
+			matcher.Register(*sig, "toggle_queue", func() {
+				h.onToggleQueue()
 			})
-			logger.Info("Успешная регистрация макроса %s: %s", macro.Name, hotkeyStr)
+			logger.Info("Успешная регистрация хоткея ToggleQueue: %s", hotkeyStr)
 		} else {
-			logger.Error("Не удалось зарегистрировать макрос %s: Signature='%s', Hotkey='%s'", macro.Name, macro.Signature, macro.Hotkey)
+			logger.Error("Не удалось зарегистрировать хоткей ToggleQueue: %s", cfg.Hotkeys.ToggleQueue)
+		}
+	}
+
+	// PasteNext
+	if cfg.Features.EnableQueue {
+		hotkeyStr := cfg.Hotkeys.PasteNext
+		sig := h.parseHotkeyToSignature(hotkeyStr)
+		if sig == nil {
+			hotkeyStr = "Alt+V"
+			sig = h.parseHotkeyToSignature(hotkeyStr)
+		}
+		if sig != nil {
+			matcher.Register(*sig, "paste_next", func() {
+				h.onPasteNext()
+			})
+			logger.Info("Успешная регистрация хоткея PasteNext: %s", hotkeyStr)
+		} else {
+			logger.Error("Не удалось зарегистрировать хоткей PasteNext: %s", cfg.Hotkeys.PasteNext)
+		}
+	}
+
+	// Макросы
+	if cfg.Features.EnableMacros {
+		for _, macro := range cfg.Macros {
+			m := macro
+			hotkeyStr := macro.Signature
+			sig := h.parseHotkeyToSignature(hotkeyStr)
+			if macro.Signature == "" || sig == nil {
+				hotkeyStr = macro.Hotkey
+				sig = h.parseHotkeyToSignature(hotkeyStr)
+			}
+			if sig != nil {
+				matcher.Register(*sig, "macro:"+hotkeyStr, func() {
+					h.controller.ExecuteMacro(m)
+				})
+				logger.Info("Успешная регистрация макроса %s: %s", macro.Name, hotkeyStr)
+			} else {
+				logger.Error("Не удалось зарегистрировать макрос %s: Signature='%s', Hotkey='%s'", macro.Name, macro.Signature, macro.Hotkey)
+			}
 		}
 	}
 }
@@ -330,13 +336,17 @@ func (h *Host) Start() error {
 			return
 		}
 
+		cfg := h.cfg.Get()
+
 		// Register configured hotkeys
 		h.registerConfiguredHotkeys()
 
 		// Add clipboard format listener
-		if err := h.clipboardWatcher.Start(); err != nil {
-			errChan <- err
-			return
+		if cfg.Features.EnableClipboard {
+			if err := h.clipboardWatcher.Start(); err != nil {
+				errChan <- err
+				return
+			}
 		}
 
 		// Initialize system tray if not in silent mode

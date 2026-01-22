@@ -1,18 +1,20 @@
 app:
-    data_dir: C:\Users\SERTY\AppData\Roaming\ClipQueue
+    data_dir: .
     silent: false
 hotkeys:
-    toggle_queue: Alt+C
-    paste_next: Alt+V
+    toggle_queue: sig:AQADCgBXABEAAAAAAAAB
+    paste_next: sig:AQADCgBWAC8AAAAAAAAB
+    toggle_queue_display: Ctrl+Alt+W
+    paste_next_display: Ctrl+Alt+V
 clipboard:
     watch_debounce_ms: 30
-    paste_delay_ms: 150
-    restore_delay_ms: 1000
+    paste_delay_ms: 50
+    restore_delay_ms: 250
 queue:
     default_order: LIFO
-macros:
-    - name: "21312"
-      hotkey: AUDIOVOLUMEDOWN
-      signature: sig:AQAACgCuAAAAEQAAAAAB
-      text: 2231sdasdыыыы
-      mode: type_hw
+features:
+    enable_queue: false
+    enable_clipboard: false
+    enable_macros: true
+    enable_lab: false
+macros: []

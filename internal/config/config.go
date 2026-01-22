@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"hash/fnv"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 
@@ -137,42 +136,50 @@ func (m *Macro) UnmarshalYAML(value *yaml.Node) error {
 
 type oldConfig struct {
 	App struct {
-		DataDir string `yaml:"data_dir"`
-		Silent  bool   `yaml:"silent"`
+		DataDir string `yaml:"data_dir" json:"dataDir"`
+		Silent  bool   `yaml:"silent" json:"silent"`
 	} `yaml:"app"`
 	Hotkeys struct {
-		ToggleQueue string `yaml:"toggle_queue"`
-		PasteNext   string `yaml:"paste_next"`
+		ToggleQueue string `yaml:"toggle_queue" json:"toggleQueue"`
+		PasteNext   string `yaml:"paste_next" json:"pasteNext"`
 	} `yaml:"hotkeys"`
 	Clipboard struct {
-		WatchDebounceMs int `yaml:"watch_debounce_ms"`
-		PasteDelayMs    int `yaml:"paste_delay_ms"`
-		RestoreDelayMs  int `yaml:"restore_delay_ms"`
+		WatchDebounceMs int `yaml:"watch_debounce_ms" json:"watchDebounceMs"`
+		PasteDelayMs    int `yaml:"paste_delay_ms" json:"pasteDelayMs"`
+		RestoreDelayMs  int `yaml:"restore_delay_ms" json:"restoreDelayMs"`
 	} `yaml:"clipboard"`
 	Queue struct {
-		DefaultOrder string `yaml:"default_order"`
+		DefaultOrder string `yaml:"default_order" json:"defaultOrder"`
 	} `yaml:"queue"`
 	Macros map[string]Macro `yaml:"macros"`
 }
 
 type Config struct {
 	App struct {
-		DataDir string `yaml:"data_dir"`
-		Silent  bool   `yaml:"silent"`
-	} `yaml:"app"`
+		DataDir string `yaml:"data_dir" json:"dataDir"`
+		Silent  bool   `yaml:"silent" json:"silent"`
+	} `yaml:"app" json:"app"`
 	Hotkeys struct {
-		ToggleQueue string `yaml:"toggle_queue"`
-		PasteNext   string `yaml:"paste_next"`
-	} `yaml:"hotkeys"`
+		ToggleQueue        string `yaml:"toggle_queue" json:"toggleQueue"`
+		PasteNext          string `yaml:"paste_next" json:"pasteNext"`
+		ToggleQueueDisplay string `yaml:"toggle_queue_display" json:"toggleQueueDisplay"`
+		PasteNextDisplay   string `yaml:"paste_next_display" json:"pasteNextDisplay"`
+	} `yaml:"hotkeys" json:"hotkeys"`
 	Clipboard struct {
-		WatchDebounceMs int `yaml:"watch_debounce_ms"`
-		PasteDelayMs    int `yaml:"paste_delay_ms"`
-		RestoreDelayMs  int `yaml:"restore_delay_ms"`
-	} `yaml:"clipboard"`
+		WatchDebounceMs int `yaml:"watch_debounce_ms" json:"watchDebounceMs"`
+		PasteDelayMs    int `yaml:"paste_delay_ms" json:"pasteDelayMs"`
+		RestoreDelayMs  int `yaml:"restore_delay_ms" json:"restoreDelayMs"`
+	} `yaml:"clipboard" json:"clipboard"`
 	Queue struct {
-		DefaultOrder string `yaml:"default_order"`
-	} `yaml:"queue"`
-	Macros []Macro `yaml:"macros"`
+		DefaultOrder string `yaml:"default_order" json:"defaultOrder"`
+	} `yaml:"queue" json:"queue"`
+	Features struct {
+		EnableQueue     bool `yaml:"enable_queue" json:"enableQueue"`
+		EnableClipboard bool `yaml:"enable_clipboard" json:"enableClipboard"`
+		EnableMacros    bool `yaml:"enable_macros" json:"enableMacros"`
+		EnableLab       bool `yaml:"enable_lab" json:"enableLab"`
+	} `yaml:"features" json:"features"`
+	Macros []Macro `yaml:"macros" json:"macros"`
 }
 
 // SafeConfig wraps Config with RWMutex for thread-safe access
@@ -220,16 +227,40 @@ func (sc *SafeConfig) Update(newCfg *Config) error {
 
 func defaultConfig() *Config {
 	cfg := &Config{}
-	cfg.App.DataDir = filepath.Join(os.Getenv("APPDATA"), "ClipQueue")
+	cfg.App.DataDir = "."
 	cfg.App.Silent = false
-	cfg.Hotkeys.ToggleQueue = "Alt+C"
-	cfg.Hotkeys.PasteNext = "Alt+V"
+	cfg.Hotkeys.ToggleQueueDisplay = "Ctrl+Alt+C"
+	cfg.Hotkeys.PasteNextDisplay = "Ctrl+Alt+V"
+	cfg.Hotkeys.ToggleQueue = "sig:AQADCgBDAC4AAAAAAAAB"
+	cfg.Hotkeys.PasteNext = "sig:AQADCgBWAC8AAAAAAAAB"
 	cfg.Clipboard.WatchDebounceMs = 30
-	cfg.Clipboard.PasteDelayMs = 150
-	cfg.Clipboard.RestoreDelayMs = 1000
+	cfg.Clipboard.PasteDelayMs = 50
+	cfg.Clipboard.RestoreDelayMs = 250
 	cfg.Queue.DefaultOrder = "LIFO"
+	cfg.Features.EnableQueue = true
+	cfg.Features.EnableClipboard = true
+	cfg.Features.EnableMacros = true
+	cfg.Features.EnableLab = true
 	cfg.Macros = []Macro{}
 	return cfg
+}
+
+func EnsureSignatures(cfg *Config) error {
+	if cfg.Hotkeys.ToggleQueue == "" && cfg.Hotkeys.ToggleQueueDisplay != "" {
+		sig, err := generateSignatureFromHotkey(cfg.Hotkeys.ToggleQueueDisplay)
+		if err != nil {
+			return err
+		}
+		cfg.Hotkeys.ToggleQueue = sig
+	}
+	if cfg.Hotkeys.PasteNext == "" && cfg.Hotkeys.PasteNextDisplay != "" {
+		sig, err := generateSignatureFromHotkey(cfg.Hotkeys.PasteNextDisplay)
+		if err != nil {
+			return err
+		}
+		cfg.Hotkeys.PasteNext = sig
+	}
+	return nil
 }
 
 func validateConfig(cfg *Config) error {
@@ -261,6 +292,9 @@ func Load() (*Config, error) {
 	if _, err := os.Stat("config.yml"); os.IsNotExist(err) {
 		// Create default config
 		cfg := defaultConfig()
+		if err := EnsureSignatures(cfg); err != nil {
+			return nil, err
+		}
 		if err := saveConfig(cfg); err != nil {
 			return nil, err
 		}
@@ -279,7 +313,8 @@ func Load() (*Config, error) {
 		// Migration: convert map to slice
 		cfg := defaultConfig()
 		cfg.App = oldCfg.App
-		cfg.Hotkeys = oldCfg.Hotkeys
+		cfg.Hotkeys.ToggleQueue = oldCfg.Hotkeys.ToggleQueue
+		cfg.Hotkeys.PasteNext = oldCfg.Hotkeys.PasteNext
 		cfg.Clipboard = oldCfg.Clipboard
 		cfg.Queue = oldCfg.Queue
 		cfg.Macros = make([]Macro, 0, len(oldCfg.Macros))

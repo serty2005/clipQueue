@@ -173,16 +173,19 @@ func (c *Controller) OnClipboardUpdate() {
 		}
 	}
 
-	// Add to history with rotation (keep last 50)
-	if len(c.history) >= 50 {
-		c.history = c.history[1:]
+	// Add to history if enabled
+	if c.cfg.Features.EnableClipboard {
+		// Add to history with rotation (keep last 50)
+		if len(c.history) >= 50 {
+			c.history = c.history[1:]
+		}
+		c.history = append(c.history, content)
+		logger.Debug("OnClipboardUpdate: добавлено в историю (тип=%s, размер=%d байт, предпросмотр=%q, длина истории=%d)",
+			content.Type.String(), content.SizeBytes, content.Preview, len(c.history))
 	}
-	c.history = append(c.history, content)
-	logger.Debug("OnClipboardUpdate: добавлено в историю (тип=%s, размер=%d байт, предпросмотр=%q, длина истории=%d)",
-		content.Type.String(), content.SizeBytes, content.Preview, len(c.history))
 
 	// Add to queue if enabled
-	if c.queueEnabled {
+	if c.cfg.Features.EnableQueue {
 		c.queue = append(c.queue, content)
 		logger.Info("OnClipboardUpdate: добавлено в очередь (тип=%s, размер=%d байт, предпросмотр=%q, длина очереди=%d)",
 			content.Type.String(), content.SizeBytes, content.Preview, len(c.queue))
@@ -247,7 +250,7 @@ func (c *Controller) PasteNext() {
 	c.addSelfEvent(windows.GetClipboardSequenceNumber())
 
 	// Give Windows time to update clipboard handles before sending Ctrl+V
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(10 * time.Millisecond)
 
 	logger.Debug("Sending Ctrl+V keystroke")
 	err = windows.SendCtrlV()
