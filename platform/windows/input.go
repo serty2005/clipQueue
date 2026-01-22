@@ -19,8 +19,12 @@ const (
 	VK_SHIFT   = 0x10
 
 	// Keyboard event flags
-	KEYEVENTF_KEYUP   = 0x0002
-	KEYEVENTF_UNICODE = 0x0004
+	KEYEVENTF_KEYUP    = 0x0002
+	KEYEVENTF_UNICODE  = 0x0004
+	KEYEVENTF_SCANCODE = 0x0008
+
+	// MapVirtualKey constants
+	MAPVK_VK_TO_VSC = 0
 )
 
 // GetAsyncKeyState checks if a key is currently pressed
@@ -49,7 +53,10 @@ type KEYBDINPUT struct {
 }
 
 var (
-	procSendInput = user32.NewProc("SendInput")
+	procSendInput         = user32.NewProc("SendInput")
+	procVkKeyScanW        = user32.NewProc("VkKeyScanW")
+	procMapVirtualKeyW    = user32.NewProc("MapVirtualKeyW")
+	procGetKeyboardLayout = user32.NewProc("GetKeyboardLayout")
 )
 
 // SendInput sends input events to the system
@@ -137,6 +144,110 @@ func TypeString(text string) error {
 	}
 
 	logger.Debug("TypeString completed successfully: %s", text)
+	return nil
+}
+
+// TypeStringHardware sends text to the active window using hardware key events (scan codes)
+func TypeStringHardware(text string) error {
+	var inputs []INPUT
+
+	// Release any stuck modifier keys before sending text
+	modifierKeys := []struct {
+		vkCode uint16
+		name   string
+	}{
+		{VK_SHIFT, "Shift"},
+		{VK_CONTROL, "Control"},
+		{VK_MENU, "Alt"},
+		{0x5B, "Left Windows"},
+		{0x5C, "Right Windows"},
+	}
+
+	for _, mod := range modifierKeys {
+		if getAsyncKeyState(mod.vkCode) {
+			logger.Debug("Releasing stuck modifier: %s", mod.name)
+			inputs = append(inputs, INPUT{
+				Type: INPUT_KEYBOARD,
+				Ki: KEYBDINPUT{
+					Wvk:     mod.vkCode,
+					DwFlags: KEYEVENTF_KEYUP,
+				},
+			})
+		}
+	}
+
+	for _, r := range text {
+		// Get virtual key code and shift state for the character
+		vkAndShift, _, _ := procVkKeyScanW.Call(uintptr(r))
+		vk := uint16(vkAndShift & 0xFF)
+		shift := (vkAndShift & 0x100) != 0
+
+		// Get scan code for the virtual key
+		sc, _, _ := procMapVirtualKeyW.Call(uintptr(vk), MAPVK_VK_TO_VSC)
+		scanCode := uint16(sc)
+
+		if shift {
+			// Press Shift
+			inputs = append(inputs, INPUT{
+				Type: INPUT_KEYBOARD,
+				Ki: KEYBDINPUT{
+					Wvk: VK_SHIFT,
+				},
+			})
+		}
+
+		// Key down event
+		inputs = append(inputs, INPUT{
+			Type: INPUT_KEYBOARD,
+			Ki: KEYBDINPUT{
+				Wvk:     vk,
+				WScan:   scanCode,
+				DwFlags: KEYEVENTF_SCANCODE,
+			},
+		})
+
+		// Key up event
+		inputs = append(inputs, INPUT{
+			Type: INPUT_KEYBOARD,
+			Ki: KEYBDINPUT{
+				Wvk:     vk,
+				WScan:   scanCode,
+				DwFlags: KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP,
+			},
+		})
+
+		if shift {
+			// Release Shift
+			inputs = append(inputs, INPUT{
+				Type: INPUT_KEYBOARD,
+				Ki: KEYBDINPUT{
+					Wvk:     VK_SHIFT,
+					DwFlags: KEYEVENTF_KEYUP,
+				},
+			})
+		}
+	}
+
+	// Send inputs in chunks with delays for RDP sessions
+	const chunkSize = 50
+	for i := 0; i < len(inputs); i += chunkSize {
+		end := i + chunkSize
+		if end > len(inputs) {
+			end = len(inputs)
+		}
+
+		chunk := inputs[i:end]
+		result := sendInput(chunk)
+		if result != uint32(len(chunk)) {
+			logger.Error("SendInput failed: only %d out of %d inputs sent", result, len(chunk))
+			return syscall.GetLastError()
+		}
+
+		// Add delay to "humanize" input for RDP sessions
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	logger.Debug("TypeStringHardware completed successfully: %s", text)
 	return nil
 }
 

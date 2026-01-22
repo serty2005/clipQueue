@@ -416,8 +416,27 @@ func (c *Controller) ExecuteMacro(macro config.Macro) error {
 
 		logger.Debug("Macro executed in paste mode")
 
+	case "type_hw":
+		// Режим "type_hw" - ввод текста с использованием аппаратного ввода
+		err := windows.TypeStringHardware(macro.Text)
+		if err != nil {
+			logger.Error("Failed to type hardware text: %v", err)
+			return err
+		}
+		logger.Debug("Macro executed in type_hw mode")
+
+	case "sequence":
+		// Режим "sequence" - пока не реализован, используем fallback к type_hw
+		logger.Info("Sequence mode not implemented yet")
+		err := windows.TypeStringHardware(macro.Text)
+		if err != nil {
+			logger.Error("Failed to type hardware text as fallback: %v", err)
+			return err
+		}
+		logger.Debug("Macro executed in sequence mode (fallback to type_hw)")
+
 	default:
-		return fmt.Errorf("unsupported macro mode: %s. Supported modes: type, paste", macro.Mode)
+		return fmt.Errorf("unsupported macro mode: %s. Supported modes: type, paste, type_hw, sequence", macro.Mode)
 	}
 
 	return nil

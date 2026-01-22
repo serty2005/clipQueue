@@ -11,8 +11,8 @@ clipboard:
 queue:
     default_order: LIFO
 macros:
-    - name: "321312"
-      hotkey: VOLUMEDOWN
+    - name: "21312"
+      hotkey: AUDIOVOLUMEDOWN
       signature: sig:AQAACgCuAAAAEQAAAAAB
-      text: уцйуйцу
-      mode: type
+      text: 2231sdasdыыыы
+      mode: type_hw

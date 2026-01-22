@@ -106,7 +106,7 @@ type Macro struct {
 	Hotkey    string `yaml:"hotkey" json:"hotkey"`
 	Signature string `yaml:"signature" json:"signature"`
 	Text      string `yaml:"text" json:"text"`
-	Mode      string `yaml:"mode" json:"mode"` // "type" (default) or "paste"
+	Mode      string `yaml:"mode" json:"mode"` // "type" (default), "paste", "type_hw", or "sequence"
 }
 
 // UnmarshalYAML implements custom YAML unmarshaling for backward compatibility
@@ -233,6 +233,12 @@ func defaultConfig() *Config {
 }
 
 func validateConfig(cfg *Config) error {
+	validModes := map[string]bool{
+		"type":     true,
+		"paste":    true,
+		"type_hw":  true,
+		"sequence": true,
+	}
 	for i, macro := range cfg.Macros {
 		if macro.Hotkey == "" {
 			return fmt.Errorf("macro %d has empty hotkey", i)
@@ -242,6 +248,9 @@ func validateConfig(cfg *Config) error {
 		}
 		if _, err := base64.StdEncoding.DecodeString(macro.Signature); err != nil {
 			return fmt.Errorf("macro %d has invalid signature: %v", i, err)
+		}
+		if !validModes[macro.Mode] {
+			return fmt.Errorf("macro %d has invalid mode: %s", i, macro.Mode)
 		}
 	}
 	return nil
