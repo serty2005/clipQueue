@@ -1,19 +1,18 @@
 app:
-    data_dir: .
+    data_dir: C:\Users\SERTY\AppData\Roaming\ClipQueue
     silent: false
 hotkeys:
-    toggle_queue: CTRL+ALT+C
-    paste_next: CTRL+ALT+V
+    toggle_queue: Alt+C
+    paste_next: Alt+V
 clipboard:
     watch_debounce_ms: 30
-    paste_delay_ms: 50
+    paste_delay_ms: 150
     restore_delay_ms: 1000
 queue:
-    default_order: FIFO
+    default_order: LIFO
 macros:
-    CTRL+ALT+Q:
-        text: 213цйуйцwqeqw211
-        mode: paste
-    CTRL+ALT+W:
-        text: 21312цйуйцуwqeqw
-        mode: type
+    - name: "321312"
+      hotkey: VOLUMEDOWN
+      signature: sig:AQAACgCuAAAAEQAAAAAB
+      text: уцйуйцу
+      mode: type

@@ -1,7 +1,10 @@
 package windows
 
 import (
+	"encoding/binary"
+	"fmt"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 	"unsafe"
@@ -69,12 +72,11 @@ type Host struct {
 	onPasteNext       func()
 	onClipboardUpdate func()
 	onTrayCommand     func(id uint32) // Callback for system tray menu commands
-	hotkeys           *Hotkeys
+	inputListener     *InputListener
 	clipboardWatcher  *ClipboardWatcher
 	tray              *Tray         // System tray icon
 	done              chan struct{} // Channel to signal that host has stopped
-	captureChan       chan string   // Channel for hotkey capture results
-	hookHandle        uintptr       // Current hook handle
+	captureChan       chan string   // Channel for hotkey capture results (legacy)
 }
 
 func NewHost(cfg *config.SafeConfig, controller MacroExecutor) (*Host, error) {
@@ -88,15 +90,11 @@ func NewHost(cfg *config.SafeConfig, controller MacroExecutor) (*Host, error) {
 		onTrayCommand:     func(id uint32) {}, // Empty default callback
 		done:              make(chan struct{}),
 		captureChan:       make(chan string, 1), // Buffered to avoid blocking
-		hookHandle:        0,
 	}
+
+	host.inputListener = NewInputListener(0) // hwnd will be set later
 
 	var err error
-	host.hotkeys, err = NewHotkeys(host)
-	if err != nil {
-		return nil, err
-	}
-
 	host.clipboardWatcher, err = NewClipboardWatcher(host)
 	if err != nil {
 		return nil, err
@@ -127,6 +125,127 @@ func (h *Host) OnTrayCommand(callback func(id uint32)) {
 	h.onTrayCommand = callback
 }
 
+// registerConfiguredHotkeys регистрирует хоткеи из конфига
+func (h *Host) registerConfiguredHotkeys() {
+	cfg := h.cfg.Get()
+	matcher := h.inputListener.GetMatcher()
+
+	// ToggleQueue
+	hotkeyStr := cfg.Hotkeys.ToggleQueue
+	sig := h.parseHotkeyToSignature(hotkeyStr)
+	if sig == nil {
+		hotkeyStr = "Alt+C"
+		sig = h.parseHotkeyToSignature(hotkeyStr)
+	}
+	if sig != nil {
+		matcher.Register(*sig, "toggle_queue", func() {
+			h.onToggleQueue()
+		})
+		logger.Info("Успешная регистрация хоткея ToggleQueue: %s", hotkeyStr)
+	} else {
+		logger.Error("Не удалось зарегистрировать хоткей ToggleQueue: %s", cfg.Hotkeys.ToggleQueue)
+	}
+
+	// PasteNext
+	hotkeyStr = cfg.Hotkeys.PasteNext
+	sig = h.parseHotkeyToSignature(hotkeyStr)
+	if sig == nil {
+		hotkeyStr = "Alt+V"
+		sig = h.parseHotkeyToSignature(hotkeyStr)
+	}
+	if sig != nil {
+		matcher.Register(*sig, "paste_next", func() {
+			h.onPasteNext()
+		})
+		logger.Info("Успешная регистрация хоткея PasteNext: %s", hotkeyStr)
+	} else {
+		logger.Error("Не удалось зарегистрировать хоткей PasteNext: %s", cfg.Hotkeys.PasteNext)
+	}
+
+	// Макросы
+	for _, macro := range cfg.Macros {
+		m := macro
+		hotkeyStr := macro.Signature
+		sig := h.parseHotkeyToSignature(hotkeyStr)
+		if macro.Signature == "" || sig == nil {
+			hotkeyStr = macro.Hotkey
+			sig = h.parseHotkeyToSignature(hotkeyStr)
+		}
+		if sig != nil {
+			matcher.Register(*sig, "macro:"+hotkeyStr, func() {
+				h.controller.ExecuteMacro(m)
+			})
+			logger.Info("Успешная регистрация макроса %s: %s", macro.Name, hotkeyStr)
+		} else {
+			logger.Error("Не удалось зарегистрировать макрос %s: Signature='%s', Hotkey='%s'", macro.Name, macro.Signature, macro.Hotkey)
+		}
+	}
+}
+
+// parseHotkeyToSignature конвертирует строку хоткея в сигнатуру
+func (h *Host) parseHotkeyToSignature(hotkeyStr string) *InputSignature {
+	// Новый формат: "sig:..."
+	if strings.HasPrefix(hotkeyStr, "sig:") {
+		sig, err := SignatureFromBase64(strings.TrimPrefix(hotkeyStr, "sig:"))
+		if err != nil {
+			logger.Error("Failed to parse signature: %v", err)
+			return nil
+		}
+		return sig
+	}
+
+	// Старый формат: "CTRL+ALT+C" - конвертируем
+	var mods uint8
+	var vk uint32
+
+	parts := strings.Split(strings.ToUpper(hotkeyStr), "+")
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		switch part {
+		case "CTRL", "CONTROL":
+			mods |= ModCtrl
+		case "ALT":
+			mods |= ModAlt
+		case "SHIFT":
+			mods |= ModShift
+		case "WIN":
+			mods |= ModWin
+		default:
+			if code, ok := keyMap[part]; ok {
+				vk = code
+			}
+		}
+	}
+
+	if vk == 0 {
+		logger.Error("Unknown key in hotkey: %s", hotkeyStr)
+		return nil
+	}
+
+	rawData := make([]byte, 10)
+	binary.LittleEndian.PutUint16(rawData[0:2], uint16(vk))
+
+	sig := NewInputSignature(SourceKeyboard, rawData, mods)
+	return &sig
+}
+
+// ParseHotkeyToSignature экспортированный метод для конвертации строки хоткея в сигнатуру
+func (h *Host) ParseHotkeyToSignature(hotkeyStr string) *InputSignature {
+	return h.parseHotkeyToSignature(hotkeyStr)
+}
+
+// CaptureHotkeyWithDisplay захватывает и возвращает ID и отображаемое имя
+func (h *Host) CaptureHotkeyWithDisplay(timeout time.Duration) (id string, display string, err error) {
+	h.inputListener.StartCapture()
+
+	sig, err := h.inputListener.WaitForCapture(timeout)
+	if err != nil {
+		return "", "", err
+	}
+
+	return "sig:" + sig.ToBase64(), sig.DisplayHint, nil
+}
+
 // UpdateTrayTooltip updates the tooltip text for the system tray icon
 func (h *Host) UpdateTrayTooltip(text string) error {
 	if h.tray != nil {
@@ -137,13 +256,16 @@ func (h *Host) UpdateTrayTooltip(text string) error {
 
 // RegisterMacro registers a macro hotkey that sends text when pressed
 func (h *Host) RegisterMacro(hotkey string, macro config.Macro) error {
-	_, err := h.hotkeys.ParseAndRegister(hotkey, func() {
-		logger.Debug("Macro hotkey pressed: %s", hotkey)
-		if err := h.controller.ExecuteMacro(macro); err != nil {
-			logger.Error("Failed to execute macro %s: %v", hotkey, err)
-		}
-	})
-	return err
+	if sig := h.parseHotkeyToSignature(hotkey); sig != nil {
+		h.inputListener.GetMatcher().Register(*sig, "macro:"+hotkey, func() {
+			logger.Debug("Macro hotkey pressed: %s", hotkey)
+			if err := h.controller.ExecuteMacro(macro); err != nil {
+				logger.Error("Failed to execute macro %s: %v", hotkey, err)
+			}
+		})
+		return nil
+	}
+	return fmt.Errorf("failed to parse hotkey: %s", hotkey)
 }
 
 func (h *Host) Start() error {
@@ -199,20 +321,17 @@ func (h *Host) Start() error {
 		}
 		h.hwnd = ret
 
-		// Register hotkeys
-		if err := h.hotkeys.Register(); err != nil {
+		// Set hwnd for input listener
+		h.inputListener = NewInputListener(h.hwnd)
+
+		// Start input listener
+		if err := h.inputListener.Start(); err != nil {
 			errChan <- err
 			return
 		}
 
-		// Register macros from config
-		if cfgCopy := h.cfg.Get(); cfgCopy.Macros != nil {
-			for hotkey, macro := range cfgCopy.Macros {
-				if err := h.RegisterMacro(hotkey, macro); err != nil {
-					logger.Error("Failed to register macro %s: %v", hotkey, err)
-				}
-			}
-		}
+		// Register configured hotkeys
+		h.registerConfiguredHotkeys()
 
 		// Add clipboard format listener
 		if err := h.clipboardWatcher.Start(); err != nil {
@@ -236,7 +355,7 @@ func (h *Host) Start() error {
 
 		// Cleanup after message loop exits
 		h.clipboardWatcher.Stop()
-		h.hotkeys.Unregister()
+		h.inputListener.Stop()
 		if h.tray != nil {
 			h.tray.Remove()
 		}
@@ -262,32 +381,8 @@ func (h *Host) ReloadConfig() error {
 }
 
 func (h *Host) CaptureHotkey(timeout time.Duration) (string, error) {
-	// Drain any old values from the channel
-	select {
-	case <-h.captureChan:
-	default:
-	}
-
-	// Send message to start capture
-	procPostMessage := user32.NewProc("PostMessageW")
-	ret, _, err := procPostMessage.Call(h.hwnd, uintptr(WM_START_CAPTURE), 0, 0)
-	if ret == 0 {
-		logger.Error("PostMessage failed for WM_START_CAPTURE: %v", err)
-		return "", err
-	}
-
-	// Wait for result or timeout
-	select {
-	case hotkey := <-h.captureChan:
-		if hotkey == "" {
-			return "", syscall.ETIMEDOUT
-		}
-		return hotkey, nil
-	case <-time.After(timeout):
-		// Send message to stop capture and unhook
-		procPostMessage.Call(h.hwnd, uintptr(WM_CAPTURE_DONE), 0, 0)
-		return "", syscall.ETIMEDOUT
-	}
+	id, _, err := h.CaptureHotkeyWithDisplay(timeout)
+	return id, err
 }
 
 func (h *Host) Stop() error {
@@ -324,34 +419,6 @@ func (h *Host) windowProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uint
 	)
 
 	switch msg {
-	case WM_START_CAPTURE:
-		logger.Info("WM_START_CAPTURE received, starting hotkey capture")
-		// Set hook directly in the main thread
-		handle, err := SetHook(func(hotkey string) {
-			logger.Info("Hotkey captured: %s", hotkey)
-			h.captureChan <- hotkey
-			// Send message to unhook
-			procPostMessage := user32.NewProc("PostMessageW")
-			procPostMessage.Call(h.hwnd, uintptr(WM_CAPTURE_DONE), 0, 0)
-		})
-		if err != nil {
-			logger.Error("Failed to set hook: %v", err)
-			h.captureChan <- ""
-		} else {
-			h.hookHandle = handle
-		}
-		return 0
-
-	case WM_CAPTURE_DONE:
-		logger.Info("WM_CAPTURE_DONE received, unhooking")
-		if h.hookHandle != 0 {
-			if err := Unhook(h.hookHandle); err != nil {
-				logger.Error("Failed to unhook: %v", err)
-			}
-			h.hookHandle = 0
-		}
-		return 0
-
 	case WM_TRAY_CALLBACK:
 		switch lParam {
 		case WM_RBUTTONUP, WM_LBUTTONUP:
@@ -364,15 +431,6 @@ func (h *Host) windowProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uint
 			}
 		}
 		return 0
-	case WM_HOTKEY:
-		logger.Info("WM_HOTKEY received, id=%d", wParam)
-		callback, exists := h.hotkeys.GetCallback(uint32(wParam))
-		if exists {
-			callback()
-		} else {
-			logger.Warn("No callback for hotkey ID: %d", wParam)
-		}
-		return 0
 
 	case WM_CLIPBOARDUPDATE:
 		logger.Info("WM_CLIPBOARDUPDATE received")
@@ -381,22 +439,10 @@ func (h *Host) windowProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uint
 
 	case WM_RELOAD_CONFIG:
 		logger.Info("WM_RELOAD_CONFIG received, reloading hotkeys...")
-		// Unregister all existing hotkeys
-		if err := h.hotkeys.Unregister(); err != nil {
-			logger.Error("Failed to unregister hotkeys: %v", err)
-		}
-		// Re-register predefined hotkeys
-		if err := h.hotkeys.Register(); err != nil {
-			logger.Error("Failed to register predefined hotkeys: %v", err)
-		}
-		// Re-register macros from config
-		if cfgCopy := h.cfg.Get(); cfgCopy.Macros != nil {
-			for hotkey, text := range cfgCopy.Macros {
-				if err := h.RegisterMacro(hotkey, text); err != nil {
-					logger.Error("Failed to register macro %s: %v", hotkey, err)
-				}
-			}
-		}
+		// Unregister all existing signatures
+		h.inputListener.GetMatcher().UnregisterAll()
+		// Re-register configured hotkeys
+		h.registerConfiguredHotkeys()
 		logger.Info("Hotkeys reloaded successfully")
 		return 0
 

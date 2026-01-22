@@ -13,6 +13,7 @@ import (
 	"github.com/serty2005/clipqueue/internal/config"
 	"github.com/serty2005/clipqueue/internal/logger"
 	"github.com/serty2005/clipqueue/internal/parser"
+	"github.com/serty2005/clipqueue/platform/windows"
 )
 
 //go:embed index.html
@@ -105,9 +106,25 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		// Update config
 		var newCfg config.Config
 		if err := json.NewDecoder(r.Body).Decode(&newCfg); err != nil {
+			logger.Error("Failed to decode JSON config: %v", err)
 			w.WriteHeader(http.StatusBadRequest)
 			fmt.Fprintf(w, "Invalid config: %v", err)
 			return
+		}
+
+		// Validate macros
+		host, ok := s.host.(*windows.Host)
+		if !ok {
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprintf(w, "Hotkey validation not supported on this platform")
+			return
+		}
+		for i, macro := range newCfg.Macros {
+			if host.ParseHotkeyToSignature(macro.Hotkey) == nil && host.ParseHotkeyToSignature(macro.Signature) == nil {
+				w.WriteHeader(http.StatusBadRequest)
+				fmt.Fprintf(w, "Invalid macro %d: neither Hotkey '%s' nor Signature '%s' is valid", i, macro.Hotkey, macro.Signature)
+				return
+			}
 		}
 
 		if err := s.config.Update(&newCfg); err != nil {
@@ -115,6 +132,8 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprintf(w, "Failed to update config: %v", err)
 			return
 		}
+
+		logger.Info("Config updated successfully")
 
 		// Update order strategy
 		if err := s.controller.SetOrderStrategy(newCfg.Queue.DefaultOrder); err != nil {
@@ -125,6 +144,8 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		if s.OnConfigUpdate != nil {
 			s.OnConfigUpdate()
 		}
+
+		logger.Info("OnConfigUpdate callback invoked")
 
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintf(w, "Config updated successfully")
@@ -171,7 +192,7 @@ func (s *Server) handleCaptureHotkey(w http.ResponseWriter, r *http.Request) {
 
 	// Cast host to windows.Host type (Windows platform specific)
 	host, ok := s.host.(interface {
-		CaptureHotkey(timeout time.Duration) (string, error)
+		CaptureHotkeyWithDisplay(timeout time.Duration) (string, string, error)
 	})
 	if !ok {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -180,7 +201,7 @@ func (s *Server) handleCaptureHotkey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Capture hotkey with 5 second timeout
-	hotkey, err := host.CaptureHotkey(5 * time.Second)
+	signature, display, err := host.CaptureHotkeyWithDisplay(5 * time.Second)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
@@ -189,7 +210,7 @@ func (s *Server) handleCaptureHotkey(w http.ResponseWriter, r *http.Request) {
 
 	// Return captured hotkey
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"hotkey": hotkey})
+	json.NewEncoder(w).Encode(map[string]string{"signature": signature, "display": display})
 }
 
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {

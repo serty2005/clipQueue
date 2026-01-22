@@ -586,7 +586,7 @@
                 <div class="form-group">
                     <label for="toggleQueue">Горячая клавиша для открытия/закрытия очереди</label>
                     <div style="display: flex; gap: 8px;">
-                        <input type="text" id="toggleQueue" class="hotkey-input" placeholder="Нажмите сочетание клавиш" readonly>
+                        <input type="text" id="toggleQueue" class="hotkey-input" placeholder="Кнопка для бинда ->" readonly>
                         <button class="btn btn-secondary" onclick="startCapture('toggleQueue')">Записать</button>
                     </div>
                 </div>
@@ -594,7 +594,7 @@
                 <div class="form-group">
                     <label for="pasteNext">Горячая клавиша для вставки следующего элемента</label>
                     <div style="display: flex; gap: 8px;">
-                        <input type="text" id="pasteNext" class="hotkey-input" placeholder="Нажмите сочетание клавиш" readonly>
+                        <input type="text" id="pasteNext" class="hotkey-input" placeholder="Кнопка для бинда ->" readonly>
                         <button class="btn btn-secondary" onclick="startCapture('pasteNext')">Записать</button>
                     </div>
                 </div>
@@ -635,6 +635,7 @@
                     <table id="macrosTable">
                         <thead>
                             <tr>
+                                <th>Имя</th>
                                 <th>Горячая Клавиша</th>
                                 <th>Текст</th>
                                 <th>Режим Ввода</th>
@@ -715,12 +716,17 @@
             </div>
             <div class="modal-body">
                 <div class="form-group">
+                    <label for="macroName">Имя макроса</label>
+                    <input type="text" id="macroName" class="form-control" placeholder="Введите имя макроса">
+                </div>
+                <div class="form-group">
                     <label for="macroHotkey">Горячая Клавиша</label>
                     <div style="display: flex; gap: 8px;">
-                        <input type="text" id="macroHotkey" class="hotkey-input" placeholder="Нажмите сочетание клавиш" readonly>
+                        <input type="text" id="macroHotkey" class="hotkey-input" placeholder="Кнопка для бинда ->" readonly>
                         <button class="btn btn-secondary" onclick="startCapture('macroHotkey')">Записать</button>
                     </div>
                 </div>
+                <input type="hidden" id="macroSignature">
                 <div class="form-group">
                     <label for="macroText">Текст</label>
                     <textarea id="macroText" class="form-control" placeholder="Введите текст для макроса"></textarea>
@@ -767,7 +773,7 @@
             }
         }
 
-        // Populate form with config data
+        // Заполнение формы данными конфигурации
         function populateForm() {
             if (config && config.Hotkeys) {
                 document.getElementById('toggleQueue').value = config.Hotkeys.ToggleQueue || '';
@@ -781,32 +787,36 @@
                 document.getElementById('pasteDelay').value = config.Clipboard.PasteDelayMs || 150;
                 document.getElementById('restoreDelay').value = config.Clipboard.RestoreDelayMs || 1000;
             }
+            if (!config.Macros) {
+                config.Macros = [];
+            }
             if (config && config.Macros) {
                 populateMacrosTable();
             }
         }
 
-        // Populate macros table
+        // Заполнение таблицы макросов
         function populateMacrosTable() {
             const tbody = document.getElementById('macrosBody');
             tbody.innerHTML = '';
 
-            for (const [hotkey, macro] of Object.entries(config.Macros)) {
+            config.Macros.forEach(macro => {
                 const row = document.createElement('tr');
                 const modeText = macro.mode === 'paste' ? 'Вставка через буфер' : 'Посимвольный ввод';
                 row.innerHTML = `
-                    <td><code>${hotkey}</code></td>
+                    <td>${escapeHtml(macro.name || '')}</td>
+                    <td><code>${macro.hotkey || ''}</code></td>
                     <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(macro.text)}</td>
                     <td>${modeText}</td>
                     <td>
                         <div class="actions">
-                            <button class="btn btn-success" onclick="editMacro('${hotkey}')">Редактировать</button>
-                            <button class="btn btn-danger" onclick="deleteMacro('${hotkey}')">Удалить</button>
+                            <button class="btn btn-success" onclick="editMacro('${macro.signature}')">Редактировать</button>
+                            <button class="btn btn-danger" onclick="deleteMacro('${macro.signature}')">Удалить</button>
                         </div>
                     </td>
                 `;
                 tbody.appendChild(row);
-            }
+            });
         }
 
         // Start hotkey capture
@@ -816,7 +826,7 @@
             const originalPlaceholder = input.placeholder;
             
             // Set recording state
-            input.value = 'Нажмите сочетание клавиш...';
+            input.value = 'Кнопка для бинда ->';
             input.classList.add('recording');
             
             try {
@@ -825,9 +835,13 @@
                 });
                 
                 const data = await response.json();
-                
-                if (response.ok && data.hotkey) {
-                    input.value = data.hotkey;
+
+                if (response.ok && data.display) {
+                    input.value = data.display;
+                    input.dataset.signature = data.signature;
+                    if (inputId === 'macroHotkey') {
+                        document.getElementById('macroSignature').value = data.signature;
+                    }
                 } else {
                     input.value = originalValue;
                     showStatus(data.error || 'Ошибка при захвате горячей клавиши', 'error');
@@ -907,21 +921,27 @@
             e.target.classList.remove('active');
         }
 
-        // Open macro modal
-        function openMacroModal(hotkey = null) {
-            editingHotkey = hotkey;
+        // Открытие модального окна макроса
+        function openMacroModal(signature = null) {
+            editingHotkey = signature;
             const modal = document.getElementById('macroModal');
             const title = document.getElementById('modalTitle');
 
-            if (hotkey) {
+            if (signature) {
                 title.textContent = 'Редактировать Макрос';
-                document.getElementById('macroHotkey').value = hotkey;
-                const macro = config.Macros[hotkey];
-                document.getElementById('macroText').value = macro.text;
-                document.getElementById('macroMode').value = macro.mode || 'type';
+                const macro = config.Macros.find(m => m.signature === signature);
+                if (macro) {
+                    document.getElementById('macroName').value = macro.name || '';
+                    document.getElementById('macroHotkey').value = macro.hotkey || '';
+                    document.getElementById('macroSignature').value = signature;
+                    document.getElementById('macroText').value = macro.text;
+                    document.getElementById('macroMode').value = macro.mode || 'type';
+                }
             } else {
                 title.textContent = 'Добавить Макрос';
+                document.getElementById('macroName').value = '';
                 document.getElementById('macroHotkey').value = '';
+                document.getElementById('macroSignature').value = '';
                 document.getElementById('macroText').value = '';
                 document.getElementById('macroMode').value = 'type';
             }
@@ -936,11 +956,18 @@
             editingHotkey = null;
         }
 
-        // Save macro
+        // Сохранение макроса
         function saveMacro() {
+            const name = document.getElementById('macroName').value.trim();
             const hotkey = document.getElementById('macroHotkey').value.trim();
+            const signature = document.getElementById('macroSignature').value.trim();
             const text = document.getElementById('macroText').value.trim();
             const mode = document.getElementById('macroMode').value;
+
+            if (!name) {
+                showStatus('Имя макроса обязательно', 'error');
+                return;
+            }
 
             if (!hotkey) {
                 showStatus('Горячая клавиша обязательна', 'error');
@@ -952,41 +979,63 @@
                 return;
             }
 
-            if (editingHotkey) {
-                delete config.Macros[editingHotkey];
-            }
-
-            config.Macros[hotkey] = {
+            const newMacroObject = {
+                signature: signature || hotkey,
+                name: name,
+                hotkey: hotkey,
                 text: text,
                 mode: mode
             };
+
+            if (editingHotkey) {
+                // Редактирование: найти индекс по старой сигнатуре и обновить
+                const index = config.Macros.findIndex(m => m.signature === editingHotkey);
+                if (index !== -1) {
+                    config.Macros[index] = newMacroObject;
+                } else {
+                    // Если не найден, добавить
+                    config.Macros.push(newMacroObject);
+                }
+            } else {
+                // Создание: добавить в массив
+                config.Macros.push(newMacroObject);
+            }
             populateMacrosTable();
             closeMacroModal();
             showStatus('Макрос сохранен', 'success');
             saveSettings();
         }
 
-        // Edit macro
-        function editMacro(hotkey) {
-            openMacroModal(hotkey);
+        // Редактирование макроса
+        function editMacro(signature) {
+            openMacroModal(signature);
         }
 
-        // Delete macro
-        function deleteMacro(hotkey) {
-            if (!confirm(`Вы уверены, что хотите удалить макрос "${hotkey}"?`)) {
+        // Удаление макроса
+        function deleteMacro(signature) {
+            if (!confirm(`Вы уверены, что хотите удалить макрос "${signature}"?`)) {
                 return;
             }
 
-            delete config.Macros[hotkey];
-            populateMacrosTable();
-            showStatus('Макрос удален', 'success');
+            const index = config.Macros.findIndex(m => m.signature === signature);
+            if (index !== -1) {
+                config.Macros.splice(index, 1);
+                populateMacrosTable();
+                showStatus('Макрос удален', 'success');
+            }
         }
 
         // Save config
         async function saveSettings() {
             try {
-                config.Hotkeys.ToggleQueue = document.getElementById('toggleQueue').value;
-                config.Hotkeys.PasteNext = document.getElementById('pasteNext').value;
+                const toggleInput = document.getElementById('toggleQueue');
+                const pasteInput = document.getElementById('pasteNext');
+
+                // Берем сигнатуру из dataset (если был новый захват) 
+                // или текущее значение (если не меняли или это старый текстовый формат)
+                config.Hotkeys.ToggleQueue = toggleInput.dataset.signature || toggleInput.value;
+                config.Hotkeys.PasteNext = pasteInput.dataset.signature || pasteInput.value;
+                
                 config.Queue.DefaultOrder = document.getElementById('defaultOrder').value;
                 config.Clipboard.WatchDebounceMs = parseInt(document.getElementById('watchDebounce').value);
                 config.Clipboard.PasteDelayMs = parseInt(document.getElementById('pasteDelay').value);
@@ -1005,6 +1054,11 @@
                 }
 
                 showStatus('Настройки сохранены успешно', 'success');
+                
+                // Очищаем dataset после сохранения, чтобы интерфейс оставался чистым
+                toggleInput.removeAttribute('data-signature');
+                pasteInput.removeAttribute('data-signature');
+                
             } catch (error) {
                 showStatus('Ошибка при сохранении настроек: ' + error.message, 'error');
             }
