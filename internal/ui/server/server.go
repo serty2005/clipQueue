@@ -21,13 +21,14 @@ var embedFS embed.FS
 
 // HistoryItemDTO represents a history item for API responses
 type HistoryItemDTO struct {
-	ID         string    `json:"id"`
-	Type       string    `json:"type"`
-	Preview    string    `json:"preview"`
-	Timestamp  time.Time `json:"timestamp"`
-	IsQueued   bool      `json:"isQueued"`
-	QueueIndex int       `json:"queueIndex"`
-	IsNext     bool      `json:"isNext"`
+	ID                 string    `json:"id"`
+	Type               string    `json:"type"`
+	Preview            string    `json:"preview"`
+	Timestamp          time.Time `json:"timestamp"`
+	IsQueued           bool      `json:"isQueued"`
+	QueueIndex         int       `json:"queueIndex"`
+	IsNext             bool      `json:"isNext"`
+	IsCurrentClipboard bool      `json:"isCurrentClipboard"`
 }
 
 // CommandStepDTO represents a single step in a command pipeline for API
@@ -58,6 +59,12 @@ type BuildResponse struct {
 	Command string `json:"command"`
 }
 
+type SequenceStopResponse struct {
+	Sequence    string `json:"sequence"`
+	EventCount  int    `json:"eventCount"`
+	RecordedHKL uint64 `json:"recordedHkl"`
+}
+
 type Server struct {
 	httpServer     *http.Server
 	config         *config.SafeConfig
@@ -86,6 +93,9 @@ func NewServer(cfg *config.SafeConfig, host interface{}, controller *app.Control
 	mux.HandleFunc("/api/history", s.handleHistory)
 	mux.HandleFunc("/api/queue/clear", s.handleQueueClear)
 	mux.HandleFunc("/api/copy", s.handleCopy)
+	mux.HandleFunc("/api/sequence/start", s.handleSequenceStart)
+	mux.HandleFunc("/api/sequence/stop", s.handleSequenceStop)
+	mux.HandleFunc("/api/sequence/status", s.handleSequenceStatus)
 
 	// Lab API routes
 	mux.HandleFunc("/api/lab/parse", s.handleLabParse)
@@ -220,6 +230,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		history := s.controller.GetHistory()
 		queue := s.controller.GetQueue()
 		order := s.controller.GetOrderStrategy()
+		currentClipboardID := s.controller.GetCurrentClipboardID()
 		var items []HistoryItemDTO
 
 		// Create map for quick lookup in queue
@@ -253,6 +264,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 				dto.QueueIndex = -1
 			}
 			dto.IsNext = dto.IsQueued && item.ID == nextID
+			dto.IsCurrentClipboard = item.ID == currentClipboardID
 			items = append(items, dto)
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -321,6 +333,100 @@ func (s *Server) handleCopy(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"message": "item copied to clipboard"})
+}
+
+func (s *Server) handleSequenceStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
+		return
+	}
+
+	host, ok := s.host.(interface {
+		StartSequenceRecording() error
+	})
+	if !ok {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Sequence recording not supported on this platform"})
+		return
+	}
+
+	if err := host.StartSequenceRecording(); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"message": "sequence recording started"})
+}
+
+func (s *Server) handleSequenceStop(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
+		return
+	}
+
+	host, ok := s.host.(interface {
+		StopSequenceRecording() (*windows.RecordedSequence, string, error)
+	})
+	if !ok {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Sequence recording not supported on this platform"})
+		return
+	}
+
+	seq, encoded, err := host.StopSequenceRecording()
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	resp := SequenceStopResponse{
+		Sequence:    encoded,
+		EventCount:  len(seq.Events),
+		RecordedHKL: seq.RecordedHKL,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+func (s *Server) handleSequenceStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
+		return
+	}
+
+	last := 30
+	if lastStr := r.URL.Query().Get("last"); lastStr != "" {
+		if _, err := fmt.Sscanf(lastStr, "%d", &last); err != nil || last <= 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "invalid last parameter"})
+			return
+		}
+	}
+
+	host, ok := s.host.(interface {
+		GetSequenceRecordingStatus(lastN int) (windows.SequenceRecordingStatus, error)
+	})
+	if !ok {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Sequence status not supported on this platform"})
+		return
+	}
+
+	status, err := host.GetSequenceRecordingStatus(last)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(status)
 }
 
 func (s *Server) handleLabParse(w http.ResponseWriter, r *http.Request) {

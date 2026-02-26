@@ -395,6 +395,36 @@ func (h *Host) CaptureHotkey(timeout time.Duration) (string, error) {
 	return id, err
 }
 
+func (h *Host) StartSequenceRecording() error {
+	if h.inputListener == nil {
+		return fmt.Errorf("input listener is not initialized")
+	}
+	h.inputListener.StartSequenceRecording()
+	return nil
+}
+
+func (h *Host) StopSequenceRecording() (*RecordedSequence, string, error) {
+	if h.inputListener == nil {
+		return nil, "", fmt.Errorf("input listener is not initialized")
+	}
+	seq, err := h.inputListener.StopSequenceRecording()
+	if err != nil {
+		return nil, "", err
+	}
+	encoded, err := seq.EncodeBase64()
+	if err != nil {
+		return nil, "", err
+	}
+	return seq, encoded, nil
+}
+
+func (h *Host) GetSequenceRecordingStatus(lastN int) (SequenceRecordingStatus, error) {
+	if h.inputListener == nil {
+		return SequenceRecordingStatus{}, fmt.Errorf("input listener is not initialized")
+	}
+	return h.inputListener.GetSequenceRecordingStatus(lastN), nil
+}
+
 func (h *Host) Stop() error {
 	// Use PostMessage to safely close the window from another goroutine
 	const WM_CLOSE = 0x0010

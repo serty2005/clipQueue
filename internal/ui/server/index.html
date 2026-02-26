@@ -755,24 +755,43 @@
                     </div>
                 </div>
                 <input type="hidden" id="macroSignature">
-                <div class="form-group">
+                <input type="hidden" id="macroSequence">
+                <div class="form-group" id="macroTextGroup">
                     <label for="macroText">Текст</label>
                     <textarea id="macroText" class="form-control" placeholder="Введите текст для макроса"></textarea>
                 </div>
                 <div class="form-group">
                     <label for="macroMode">Режим Ввода</label>
                     <select id="macroMode" class="form-control">
-                        <option value="type">Посимвольный ввод (Type)</option>
-                        <option value="paste">Вставка через буфер (Paste)</option>
-                        <option value="type_hw">Посимвольный ввод (Hardware/RDP)</option>
+                        <option value="type">Type</option>
+                        <option value="paste">Paste</option>
+                        <option value="type_hw">Hardware/RDP</option>
+                        <option value="sequence">Sequence (record/replay)</option>
                     </select>
+                </div>
+                <div class="form-group" id="sequencePanel" style="display:none;">
+                    <label>Sequence Recording</label>
+                    <div style="display:flex; gap:8px; margin-bottom:8px;">
+                        <button type="button" id="sequenceStartBtn" class="btn btn-secondary" onclick="startSequenceRecording()">Start Record</button>
+                        <button type="button" id="sequenceStopBtn" class="btn btn-primary" onclick="stopSequenceRecording()" disabled>Stop Record</button>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+                        <label style="display:flex; align-items:center; gap:6px; margin:0;">
+                            <input type="checkbox" id="sequenceNormalizeDelays">
+                            Normalize delays
+                        </label>
+                        <input type="number" id="sequenceDelayMs" class="form-control" min="0" step="1" value="15" style="width:100px;" title="Fixed delay (ms)">
+                        <span style="font-size:12px; color:#666;">ms</span>
+                    </div>
+                    <div id="sequenceMeta" style="font-size:12px; color:#666; margin-bottom:8px;">No sequence recorded</div>
+                    <div id="sequenceEvents" style="max-height:180px; overflow:auto; border:1px solid #ddd; border-radius:6px; padding:8px; background:#fafafa; font-family:Consolas, monospace; font-size:12px;"></div>
                 </div>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="closeMacroModal()">Отмена</button>
-                <button class="btn btn-primary" onclick="saveMacro()">Сохранить</button>
+                <button class="btn btn-secondary" onclick="closeMacroModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="saveMacro()">Save</button>
             </div>
-        </div>
+    </div>
     </div>
 
     <div id="statusMessage" class="status-message"></div>
@@ -781,11 +800,15 @@
         let config = null;
         let editingHotkey = null;
         let selectedHotkeyInput = null;
+        let sequenceRecording = false;
+        let sequencePollingTimer = null;
+        let sequenceLastPreview = [];
 
         // Load config on page load
         document.addEventListener('DOMContentLoaded', () => {
             loadConfig();
             setupHotkeyInputs();
+            document.getElementById('macroMode').addEventListener('change', updateMacroModeUI);
         });
 
         // Load config from API
@@ -887,7 +910,7 @@
 
             config.macros.forEach(macro => {
                 const row = document.createElement('tr');
-                const modeText = macro.mode === 'paste' ? 'Вставка через буфер' : 'Посимвольный ввод';
+                let modeText = 'Type'; if (macro.mode === 'paste') modeText = 'Paste'; else if (macro.mode === 'type_hw') modeText = 'Hardware'; else if (macro.mode === 'sequence') modeText = 'Sequence';
                 row.innerHTML = `
                     <td>${escapeHtml(macro.name || '')}</td>
                     <td><code>${macro.hotkey || ''}</code></td>
@@ -950,6 +973,151 @@
                 input.addEventListener('focus', handleHotkeyFocus);
                 input.addEventListener('blur', handleHotkeyBlur);
             });
+        }
+
+        function updateMacroModeUI() {
+            const mode = document.getElementById('macroMode').value;
+            const panel = document.getElementById('sequencePanel');
+            const textGroup = document.getElementById('macroTextGroup');
+            if (panel) panel.style.display = mode === 'sequence' ? 'block' : 'none';
+            if (textGroup) textGroup.style.display = mode === 'sequence' ? 'none' : 'block';
+        }
+
+        function resetSequenceUI() {
+            sequenceRecording = false;
+            sequenceLastPreview = [];
+            if (sequencePollingTimer) {
+                clearInterval(sequencePollingTimer);
+                sequencePollingTimer = null;
+            }
+            const startBtn = document.getElementById('sequenceStartBtn');
+            const stopBtn = document.getElementById('sequenceStopBtn');
+            const meta = document.getElementById('sequenceMeta');
+            const events = document.getElementById('sequenceEvents');
+            if (startBtn) startBtn.disabled = false;
+            if (stopBtn) stopBtn.disabled = true;
+            if (meta) meta.textContent = document.getElementById('macroSequence').value ? 'Sequence loaded from macro' : 'No sequence recorded';
+            if (events) events.innerHTML = '';
+            if (document.getElementById('macroSequence').value) {
+                renderStoredSequencePreview();
+            }
+        }
+
+        function renderStoredSequencePreview() {
+            const encoded = (document.getElementById('macroSequence')?.value || '').trim();
+            if (!encoded) return;
+            try {
+                const json = atob(encoded);
+                const seq = JSON.parse(json);
+                renderSequencePreview({
+                    active: false,
+                    eventCount: Array.isArray(seq.events) ? seq.events.length : 0,
+                    recordedHkl: seq.recordedHkl || 0,
+                    events: Array.isArray(seq.events) ? seq.events.slice(-24) : []
+                });
+            } catch (e) {
+                console.error('Sequence decode error:', e);
+                const meta = document.getElementById('sequenceMeta');
+                if (meta) meta.textContent = 'Stored sequence present, preview decode failed';
+            }
+        }
+        function formatSequenceEvent(ev, idx) {
+            const msg = Number(ev.message);
+            let edge = 'EV';
+            if (msg === 0x0100 || msg === 0x0104) edge = 'DOWN';
+            if (msg === 0x0101 || msg === 0x0105) edge = 'UP';
+            const vk = Number(ev.vk || 0).toString(16).toUpperCase().padStart(2, '0');
+            const sc = Number(ev.scanCode || 0).toString(16).toUpperCase().padStart(2, '0');
+            const delay = Number(ev.delayMs || 0);
+            return `${String(idx + 1).padStart(2, '0')} ${edge} vk=0x${vk} sc=0x${sc} dt=${delay}ms`;
+        }
+
+        function renderSequencePreview(status) {
+            const eventsBox = document.getElementById('sequenceEvents');
+            const meta = document.getElementById('sequenceMeta');
+            if (!eventsBox || !meta) return;
+
+            const list = Array.isArray(status.events) ? status.events : [];
+            sequenceLastPreview = list;
+            eventsBox.innerHTML = list.length
+                ? list.map((ev, i) => `<div>${escapeHtml(formatSequenceEvent(ev, i))}</div>`).join('')
+                : '<div style="color:#777;">No events yet</div>';
+
+            meta.textContent = `Active: ${!!status.active} | Events: ${status.eventCount || 0} | HKL: 0x${Number(status.recordedHkl || 0).toString(16).toUpperCase()}`;
+            eventsBox.scrollTop = eventsBox.scrollHeight;
+        }
+
+        async function pollSequenceStatusOnce() {
+            try {
+                const response = await fetch('/api/sequence/status?last=24');
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.error || 'Failed to get sequence status');
+                renderSequencePreview(data);
+
+                const startBtn = document.getElementById('sequenceStartBtn');
+                const stopBtn = document.getElementById('sequenceStopBtn');
+                sequenceRecording = !!data.active;
+                if (startBtn) startBtn.disabled = sequenceRecording;
+                if (stopBtn) stopBtn.disabled = !sequenceRecording;
+            } catch (error) {
+                console.error('Sequence status error:', error);
+            }
+        }
+
+        function startSequencePolling() {
+            if (sequencePollingTimer) clearInterval(sequencePollingTimer);
+            sequencePollingTimer = setInterval(() => {
+                if (document.getElementById('macroModal').classList.contains('active')) {
+                    pollSequenceStatusOnce();
+                }
+            }, 250);
+        }
+
+        function stopSequencePolling() {
+            if (sequencePollingTimer) {
+                clearInterval(sequencePollingTimer);
+                sequencePollingTimer = null;
+            }
+        }
+
+        async function startSequenceRecording() {
+            try {
+                const response = await fetch('/api/sequence/start', { method: 'POST' });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.error || 'Failed to start sequence recording');
+
+                document.getElementById('macroSequence').value = '';
+                document.getElementById('sequenceNormalizeDelays').checked = false;
+                document.getElementById('sequenceDelayMs').value = 15;
+                sequenceRecording = true;
+                document.getElementById('sequenceStartBtn').disabled = true;
+                document.getElementById('sequenceStopBtn').disabled = false;
+                document.getElementById('sequenceMeta').textContent = 'Recording...';
+                document.getElementById('sequenceEvents').innerHTML = '<div style=\"color:#777;\">Waiting for key events...</div>';
+                startSequencePolling();
+                await pollSequenceStatusOnce();
+                showStatus('Sequence recording started', 'success');
+            } catch (error) {
+                showStatus('Sequence start error: ' + error.message, 'error');
+            }
+        }
+
+        async function stopSequenceRecording() {
+            try {
+                const response = await fetch('/api/sequence/stop', { method: 'POST' });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.error || 'Failed to stop sequence recording');
+
+                document.getElementById('macroSequence').value = data.sequence || '';
+                sequenceRecording = false;
+                document.getElementById('sequenceStartBtn').disabled = false;
+                document.getElementById('sequenceStopBtn').disabled = true;
+                stopSequencePolling();
+                await pollSequenceStatusOnce();
+                showStatus(`Sequence recorded: ${data.eventCount || 0} events`, 'success');
+            } catch (error) {
+                showStatus('Sequence stop error: ' + error.message, 'error');
+            }
         }
 
         // Handle hotkey event
@@ -1021,6 +1189,9 @@
                     document.getElementById('macroSignature').value = signature;
                     document.getElementById('macroText').value = macro.text;
                     document.getElementById('macroMode').value = macro.mode || 'type';
+                    document.getElementById('macroSequence').value = macro.sequence || '';
+                    document.getElementById('sequenceNormalizeDelays').checked = !!macro.sequenceNormalizeDelays;
+                    document.getElementById('sequenceDelayMs').value = (macro.sequenceDelayMs ?? 15);
                 }
             } else {
                 title.textContent = 'Добавить Макрос';
@@ -1029,13 +1200,19 @@
                 document.getElementById('macroSignature').value = '';
                 document.getElementById('macroText').value = '';
                 document.getElementById('macroMode').value = 'type';
+                document.getElementById('macroSequence').value = '';
+                document.getElementById('sequenceNormalizeDelays').checked = false;
+                document.getElementById('sequenceDelayMs').value = 15;
             }
-
+            updateMacroModeUI();
+            resetSequenceUI();
             modal.classList.add('active');
         }
 
         // Close macro modal
         function closeMacroModal() {
+            stopSequencePolling();
+            sequenceRecording = false;
             const modal = document.getElementById('macroModal');
             modal.classList.remove('active');
             editingHotkey = null;
@@ -1048,6 +1225,9 @@
             const signature = document.getElementById('macroSignature').value.trim();
             const text = document.getElementById('macroText').value.trim();
             const mode = document.getElementById('macroMode').value;
+            const sequence = document.getElementById('macroSequence').value.trim();
+            const sequenceNormalizeDelays = document.getElementById('sequenceNormalizeDelays').checked;
+            const sequenceDelayMs = parseInt(document.getElementById('sequenceDelayMs').value || '0', 10) || 0;
 
             if (!name) {
                 showStatus('Имя макроса обязательно', 'error');
@@ -1059,8 +1239,13 @@
                 return;
             }
 
-            if (!text) {
+            if (mode !== 'sequence' && !text) {
                 showStatus('Текст макроса обязателен', 'error');
+                return;
+            }
+
+            if (mode === 'sequence' && !sequence) {
+                showStatus('Sequence is empty. Record a sequence first.', 'error');
                 return;
             }
 
@@ -1069,7 +1254,10 @@
                 name: name,
                 hotkey: hotkey,
                 text: text,
-                mode: mode
+                mode: mode,
+                sequence: sequence,
+                sequenceNormalizeDelays: sequenceNormalizeDelays,
+                sequenceDelayMs: sequenceDelayMs
             };
 
             if (editingHotkey) {
@@ -1549,3 +1737,11 @@
     </script>
 </body>
 </html>
+
+
+
+
+
+
+
+

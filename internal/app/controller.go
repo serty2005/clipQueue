@@ -12,17 +12,17 @@ import (
 
 // Controller manages the clipboard queue functionality
 type Controller struct {
-	mu               sync.Mutex
-	queueEnabled     bool
-	queue            []windows.ClipboardContent
-	history          []windows.ClipboardContent // Stores last 50 clipboard items
-	snapshotOnEnable *windows.ClipboardContent
-	selfEventsRing   []uint32 // Ring buffer for self-event suppression
-	ringIndex        int      // Current index for ring buffer
-	ringSize         int      // Size of ring buffer
-	cfg              *config.Config
-	orderStrategy    string                                     // "LIFO" or "FIFO"
-	onStateChange    func(enabled bool, count int, mode string) // Callback for state changes
+	mu                 sync.Mutex
+	queueEnabled       bool
+	queue              []windows.ClipboardContent
+	history            []windows.ClipboardContent // Stores last 50 clipboard items
+	currentClipboardID string
+	selfEventsRing     []uint32 // Ring buffer for self-event suppression
+	ringIndex          int      // Current index for ring buffer
+	ringSize           int      // Size of ring buffer
+	cfg                *config.Config
+	orderStrategy      string                                     // "LIFO" or "FIFO"
+	onStateChange      func(enabled bool, count int, mode string) // Callback for state changes
 }
 
 // NewController creates a new instance of Controller
@@ -51,33 +51,38 @@ func (c *Controller) SetStateCallback(fn func(enabled bool, count int, mode stri
 // ClearQueue clears the clipboard queue
 func (c *Controller) ClearQueue() {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
+	cb := c.onStateChange
+	enabled := c.queueEnabled
+	mode := c.orderStrategy
 	if len(c.queue) == 0 {
+		c.mu.Unlock()
 		logger.Debug("ClearQueue skipped - queue is already empty")
-		// Still call callback to update UI
-		c.onStateChange(c.queueEnabled, 0, c.orderStrategy)
+		cb(enabled, 0, mode)
 		return
 	}
 
 	c.queue = nil
+	c.mu.Unlock()
 	logger.Info("Queue cleared")
-	c.onStateChange(c.queueEnabled, 0, c.orderStrategy)
+	cb(enabled, 0, mode)
 }
 
 // ToggleOrder toggles the queue order between LIFO and FIFO
 func (c *Controller) ToggleOrder() {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	if c.orderStrategy == "LIFO" {
 		c.orderStrategy = "FIFO"
 	} else {
 		c.orderStrategy = "LIFO"
 	}
+	cb := c.onStateChange
+	enabled := c.queueEnabled
+	count := len(c.queue)
+	mode := c.orderStrategy
+	c.mu.Unlock()
 
-	logger.Info("Queue order toggled to: %s", c.orderStrategy)
-	c.onStateChange(c.queueEnabled, len(c.queue), c.orderStrategy)
+	logger.Info("Queue order toggled to: %s", mode)
+	cb(enabled, count, mode)
 }
 
 // ToggleQueue toggles the queue mode on or off
@@ -87,46 +92,23 @@ func (c *Controller) ToggleQueue() {
 	c.mu.Lock()
 
 	if !c.queueEnabled {
-		// Enable queue mode - take snapshot before enabling
-		c.mu.Unlock()
-		logger.Debug("Taking clipboard snapshot before enabling queue")
-		snap, err := windows.Read()
-		if err != nil {
-			logger.Error("Failed to take clipboard snapshot: %v", err)
-		}
-		c.mu.Lock()
-		c.snapshotOnEnable = &snap
-
-		c.queue = nil // Clear any existing queue
 		c.queueEnabled = true
-		logger.Info("Queue mode enabled")
+		cb := c.onStateChange
+		count := len(c.queue)
+		mode := c.orderStrategy
 		c.mu.Unlock()
-		c.onStateChange(c.queueEnabled, len(c.queue), c.orderStrategy)
+		logger.Info("Queue mode enabled")
+		cb(true, count, mode)
 	} else {
-		// Disable queue mode
+		// Disable queue mode and clear queued markers while keeping history intact.
 		c.queueEnabled = false
 		c.queue = nil
-
-		var snapshotToRestore *windows.ClipboardContent
-		if c.snapshotOnEnable != nil {
-			snapshotToRestore = c.snapshotOnEnable
-			c.snapshotOnEnable = nil
-		}
-
+		cb := c.onStateChange
+		mode := c.orderStrategy
 		c.mu.Unlock()
 
-		if snapshotToRestore != nil {
-			logger.Debug("Restoring clipboard to snapshot state")
-			err := windows.Write(*snapshotToRestore)
-			if err != nil {
-				logger.Error("Failed to restore clipboard snapshot: %v", err)
-			}
-			// Add sequence number to self-event suppression ring buffer
-			c.addSelfEvent(windows.GetClipboardSequenceNumber())
-		}
-
 		logger.Info("Queue mode disabled")
-		c.onStateChange(c.queueEnabled, 0, c.orderStrategy)
+		cb(false, 0, mode)
 	}
 }
 
@@ -135,12 +117,12 @@ func (c *Controller) OnClipboardUpdate() {
 	time.Sleep(50 * time.Millisecond)
 
 	c.mu.Lock()
-	defer c.mu.Unlock()
 
 	// Check for self-event suppression
 	seq := windows.GetClipboardSequenceNumber()
 	if c.isSelfEvent(seq) {
-		logger.Debug("OnClipboardUpdate: пропущен самопоявление (seq=%d)", seq)
+		logger.Debug("OnClipboardUpdate: пропущено self-событие (seq=%d)", seq)
+		c.mu.Unlock()
 		return
 	}
 
@@ -148,15 +130,18 @@ func (c *Controller) OnClipboardUpdate() {
 	content, err := windows.Read()
 	if err != nil {
 		logger.Error("OnClipboardUpdate: ошибка чтения буфера обмена - %v", err)
+		c.mu.Unlock()
 		return
 	}
 
 	if content.Type == windows.Empty {
 		logger.Debug("OnClipboardUpdate: пропущен пустой контент")
+		c.currentClipboardID = ""
+		c.mu.Unlock()
 		return
 	}
 
-	// Deduplication check
+	// Deduplication check for the most recent history item.
 	if len(c.history) > 0 {
 		last := c.history[len(c.history)-1]
 		if content.Type == last.Type && content.Timestamp.Sub(last.Timestamp) < time.Second {
@@ -167,7 +152,9 @@ func (c *Controller) OnClipboardUpdate() {
 				contentMatch = content.SizeBytes == last.SizeBytes
 			}
 			if contentMatch {
+				c.currentClipboardID = last.ID
 				logger.Debug("OnClipboardUpdate: пропущен дубликат контента")
+				c.mu.Unlock()
 				return
 			}
 		}
@@ -175,24 +162,32 @@ func (c *Controller) OnClipboardUpdate() {
 
 	// Add to history if enabled
 	if c.cfg.Features.EnableClipboard {
-		// Add to history with rotation (keep last 50)
 		if len(c.history) >= 50 {
 			c.history = c.history[1:]
 		}
 		c.history = append(c.history, content)
+		c.currentClipboardID = content.ID
 		logger.Debug("OnClipboardUpdate: добавлено в историю (тип=%s, размер=%d байт, предпросмотр=%q, длина истории=%d)",
 			content.Type.String(), content.SizeBytes, content.Preview, len(c.history))
 	}
 
-	// Add to queue if enabled
-	if c.cfg.Features.EnableQueue {
+	// Add to queue only while queue mode is enabled.
+	if c.cfg.Features.EnableQueue && c.queueEnabled {
 		c.queue = append(c.queue, content)
+		cb := c.onStateChange
+		enabled := c.queueEnabled
+		count := len(c.queue)
+		mode := c.orderStrategy
+		c.mu.Unlock()
+
 		logger.Info("OnClipboardUpdate: добавлено в очередь (тип=%s, размер=%d байт, предпросмотр=%q, длина очереди=%d)",
-			content.Type.String(), content.SizeBytes, content.Preview, len(c.queue))
-		c.onStateChange(c.queueEnabled, len(c.queue), c.orderStrategy)
-	} else {
-		logger.Debug("OnClipboardUpdate: не добавлено в очередь (очередь отключена)")
+			content.Type.String(), content.SizeBytes, content.Preview, count)
+		cb(enabled, count, mode)
+		return
 	}
+
+	c.mu.Unlock()
+	logger.Debug("OnClipboardUpdate: не добавлено в очередь (режим очереди выключен или фича отключена)")
 }
 
 // PasteNext retrieves and pastes the next item from the clipboard queue
@@ -229,8 +224,12 @@ func (c *Controller) PasteNext() {
 
 	logger.Info("Dequeued clipboard content (type=%s, size=%d bytes, preview=%q, queue length=%d, order=%s)",
 		item.Type.String(), item.SizeBytes, item.Preview, len(c.queue), c.orderStrategy)
-	c.onStateChange(c.queueEnabled, len(c.queue), c.orderStrategy)
+	cb := c.onStateChange
+	enabled := c.queueEnabled
+	count := len(c.queue)
+	mode := c.orderStrategy
 	c.mu.Unlock()
+	cb(enabled, count, mode)
 
 	// Save current clipboard state
 	logger.Debug("Saving current clipboard state before pasting")
@@ -293,6 +292,13 @@ func (c *Controller) GetHistory() []windows.ClipboardContent {
 	return historyCopy
 }
 
+// GetCurrentClipboardID returns the ID of the item currently known to be in clipboard.
+func (c *Controller) GetCurrentClipboardID() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.currentClipboardID
+}
+
 // GetOrderStrategy returns the current order strategy
 func (c *Controller) GetOrderStrategy() string {
 	c.mu.Lock()
@@ -303,36 +309,48 @@ func (c *Controller) GetOrderStrategy() string {
 // SetOrderStrategy sets the queue order strategy (LIFO or FIFO)
 func (c *Controller) SetOrderStrategy(order string) error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 
 	if order != "LIFO" && order != "FIFO" {
-		return fmt.Errorf("не поддерживаемая стратегия порядка: %s. Допустимые значения: LIFO, FIFO", order)
+		c.mu.Unlock()
+		return fmt.Errorf("unsupported order strategy: %s. Allowed values: LIFO, FIFO", order)
 	}
 
 	if c.orderStrategy == order {
-		logger.Debug("SetOrderStrategy: стратегия уже установлена на %s", order)
+		c.mu.Unlock()
+		logger.Debug("SetOrderStrategy: strategy already set to %s", order)
 		return nil
 	}
 
 	c.orderStrategy = order
-	logger.Info("SetOrderStrategy: стратегия порядка изменена на %s", order)
-	c.onStateChange(c.queueEnabled, len(c.queue), c.orderStrategy)
+	cb := c.onStateChange
+	enabled := c.queueEnabled
+	count := len(c.queue)
+	mode := c.orderStrategy
+	c.mu.Unlock()
+
+	logger.Info("SetOrderStrategy: order strategy changed to %s", mode)
+	cb(enabled, count, mode)
 	return nil
 }
 
 // RemoveItem removes an item from the queue by index with mutex protection and index validation
 func (c *Controller) RemoveItem(index int) error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 
 	if index < 0 || index >= len(c.queue) {
+		c.mu.Unlock()
 		return fmt.Errorf("invalid index: %d, queue length: %d", index, len(c.queue))
 	}
 
-	// Remove the item by slicing
 	c.queue = append(c.queue[:index], c.queue[index+1:]...)
-	logger.Info("Removed item at index %d, queue length now: %d", index, len(c.queue))
-	c.onStateChange(c.queueEnabled, len(c.queue), c.orderStrategy)
+	cb := c.onStateChange
+	enabled := c.queueEnabled
+	count := len(c.queue)
+	mode := c.orderStrategy
+	c.mu.Unlock()
+
+	logger.Info("Removed item at index %d, queue length now: %d", index, count)
+	cb(enabled, count, mode)
 	return nil
 }
 
@@ -429,14 +447,21 @@ func (c *Controller) ExecuteMacro(macro config.Macro) error {
 		logger.Debug("Macro executed in type_hw mode")
 
 	case "sequence":
-		// Режим "sequence" - пока не реализован, используем fallback к type_hw
-		logger.Info("Sequence mode not implemented yet")
-		err := windows.TypeStringHardware(macro.Text)
+		if macro.Sequence == "" {
+			return fmt.Errorf("sequence macro %q has no recorded sequence", macro.Name)
+		}
+		opts := windows.SequencePlaybackOptions{
+			NormalizeDelays: macro.SequenceNormalizeDelays,
+		}
+		if macro.SequenceDelayMs > 0 {
+			opts.FixedDelayMs = uint32(macro.SequenceDelayMs)
+		}
+		err := windows.PlayRecordedSequenceBase64WithOptions(macro.Sequence, opts)
 		if err != nil {
-			logger.Error("Failed to type hardware text as fallback: %v", err)
+			logger.Error("Failed to replay sequence: %v", err)
 			return err
 		}
-		logger.Debug("Macro executed in sequence mode (fallback to type_hw)")
+		logger.Debug("Macro executed in sequence mode")
 
 	default:
 		return fmt.Errorf("unsupported macro mode: %s. Supported modes: type, paste, type_hw, sequence", macro.Mode)
@@ -456,6 +481,7 @@ func (c *Controller) CopyItem(id string) error {
 			if err != nil {
 				return err
 			}
+			c.currentClipboardID = id
 			c.addSelfEventLocked(windows.GetClipboardSequenceNumber())
 			logger.Info("Copied item from history to clipboard (id=%s, type=%s)", id, item.Type.String())
 			return nil

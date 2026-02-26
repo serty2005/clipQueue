@@ -19,9 +19,10 @@ const (
 	VK_SHIFT   = 0x10
 
 	// Keyboard event flags
-	KEYEVENTF_KEYUP    = 0x0002
-	KEYEVENTF_UNICODE  = 0x0004
-	KEYEVENTF_SCANCODE = 0x0008
+	KEYEVENTF_EXTENDEDKEY = 0x0001
+	KEYEVENTF_KEYUP       = 0x0002
+	KEYEVENTF_UNICODE     = 0x0004
+	KEYEVENTF_SCANCODE    = 0x0008
 
 	// MapVirtualKey constants
 	MAPVK_VK_TO_VSC = 0
@@ -53,11 +54,82 @@ type KEYBDINPUT struct {
 }
 
 var (
-	procSendInput         = user32.NewProc("SendInput")
-	procVkKeyScanW        = user32.NewProc("VkKeyScanW")
-	procMapVirtualKeyW    = user32.NewProc("MapVirtualKeyW")
-	procGetKeyboardLayout = user32.NewProc("GetKeyboardLayout")
+	procSendInput                = user32.NewProc("SendInput")
+	procVkKeyScanW               = user32.NewProc("VkKeyScanW")
+	procVkKeyScanExW             = user32.NewProc("VkKeyScanExW")
+	procMapVirtualKeyW           = user32.NewProc("MapVirtualKeyW")
+	procGetKeyboardLayout        = user32.NewProc("GetKeyboardLayout")
+	procGetForegroundWindow      = user32.NewProc("GetForegroundWindow")
+	procGetWindowThreadProcessId = user32.NewProc("GetWindowThreadProcessId")
 )
+
+func describeVkKeyScanModifiers(mods byte) string {
+	names := ""
+	if mods&0x01 != 0 {
+		names += "SHIFT|"
+	}
+	if mods&0x02 != 0 {
+		names += "CTRL|"
+	}
+	if mods&0x04 != 0 {
+		names += "ALT|"
+	}
+	if mods&0x08 != 0 {
+		names += "HANKAKU|"
+	}
+	if names == "" {
+		return "none"
+	}
+	return names[:len(names)-1]
+}
+
+func getForegroundKeyboardContext() (hwnd uintptr, threadID uint32, hkl uintptr) {
+	hwnd, _, _ = procGetForegroundWindow.Call()
+	if hwnd == 0 {
+		return 0, 0, 0
+	}
+
+	tid, _, _ := procGetWindowThreadProcessId.Call(hwnd, 0)
+	threadID = uint32(tid)
+
+	layout, _, _ := procGetKeyboardLayout.Call(uintptr(threadID))
+	hkl = layout
+	return
+}
+
+func appendUnicodeRuneInputs(inputs *[]INPUT, r rune) {
+	utf16Char := uint16(r)
+	*inputs = append(*inputs,
+		INPUT{
+			Type: INPUT_KEYBOARD,
+			Ki: KEYBDINPUT{
+				WScan:   utf16Char,
+				DwFlags: KEYEVENTF_UNICODE,
+			},
+		},
+		INPUT{
+			Type: INPUT_KEYBOARD,
+			Ki: KEYBDINPUT{
+				WScan:   utf16Char,
+				DwFlags: KEYEVENTF_UNICODE | KEYEVENTF_KEYUP,
+			},
+		},
+	)
+}
+
+func appendVirtualKeyInput(inputs *[]INPUT, vk uint16, keyUp bool) {
+	flags := uint32(0)
+	if keyUp {
+		flags = KEYEVENTF_KEYUP
+	}
+	*inputs = append(*inputs, INPUT{
+		Type: INPUT_KEYBOARD,
+		Ki: KEYBDINPUT{
+			Wvk:     vk,
+			DwFlags: flags,
+		},
+	})
+}
 
 // SendInput sends input events to the system
 func sendInput(inputs []INPUT) uint32 {
@@ -103,25 +175,7 @@ func TypeString(text string) error {
 	}
 
 	for _, r := range text {
-		utf16Char := uint16(r)
-
-		// Key down event
-		inputs = append(inputs, INPUT{
-			Type: INPUT_KEYBOARD,
-			Ki: KEYBDINPUT{
-				WScan:   utf16Char,
-				DwFlags: KEYEVENTF_UNICODE,
-			},
-		})
-
-		// Key up event
-		inputs = append(inputs, INPUT{
-			Type: INPUT_KEYBOARD,
-			Ki: KEYBDINPUT{
-				WScan:   utf16Char,
-				DwFlags: KEYEVENTF_UNICODE | KEYEVENTF_KEYUP,
-			},
-		})
+		appendUnicodeRuneInputs(&inputs, r)
 	}
 
 	// Send inputs in chunks with delays for RDP sessions
@@ -150,6 +204,11 @@ func TypeString(text string) error {
 // TypeStringHardware sends text to the active window using hardware key events (scan codes)
 func TypeStringHardware(text string) error {
 	var inputs []INPUT
+	hwnd, threadID, hkl := getForegroundKeyboardContext()
+	logger.Debug("TypeStringHardware start: textLen=%d, fgHwnd=0x%X, fgThreadID=%d, fgHKL=0x%X",
+		len([]rune(text)), hwnd, threadID, hkl)
+	mappedCount := 0
+	fallbackUnicodeCount := 0
 
 	// Release any stuck modifier keys before sending text
 	modifierKeys := []struct {
@@ -176,24 +235,44 @@ func TypeStringHardware(text string) error {
 		}
 	}
 
-	for _, r := range text {
+	for idx, r := range text {
 		// Get virtual key code and shift state for the character
-		vkAndShift, _, _ := procVkKeyScanW.Call(uintptr(r))
-		vk := uint16(vkAndShift & 0xFF)
-		shift := (vkAndShift & 0x100) != 0
+		var vkAndShift uintptr
+		if hkl != 0 {
+			vkAndShift, _, _ = procVkKeyScanExW.Call(uintptr(r), hkl)
+		} else {
+			vkAndShift, _, _ = procVkKeyScanW.Call(uintptr(r))
+		}
+		vkScanShort := int16(uint16(vkAndShift))
+		unmappable := vkScanShort == -1
+		vkScanRaw := uint16(vkScanShort)
+		vk := uint16(vkScanRaw & 0x00FF)
+		mods := byte((vkScanRaw >> 8) & 0x00FF)
+		shift := (mods & 0x01) != 0
 
 		// Get scan code for the virtual key
 		sc, _, _ := procMapVirtualKeyW.Call(uintptr(vk), MAPVK_VK_TO_VSC)
 		scanCode := uint16(sc)
 
+		logger.Debug("TypeStringHardware map[%d]: rune=%q U+%04X vkScan=0x%04X signed=%d unmappable=%v vk=0x%02X mods=0x%02X(%s) scan=0x%02X",
+			idx, r, r, vkScanRaw, vkScanShort, unmappable, vk, mods, describeVkKeyScanModifiers(mods), scanCode)
+
+		if unmappable || vk == 0 || scanCode == 0 || (mods&^byte(0x07)) != 0 {
+			fallbackUnicodeCount++
+			logger.Debug("TypeStringHardware fallback[%d]: rune=%q reason=unmappable_or_unsupported", idx, r)
+			appendUnicodeRuneInputs(&inputs, r)
+			continue
+		}
+
+		if mods&0x02 != 0 {
+			appendVirtualKeyInput(&inputs, VK_CONTROL, false)
+		}
+		if mods&0x04 != 0 {
+			appendVirtualKeyInput(&inputs, VK_MENU, false)
+		}
+
 		if shift {
-			// Press Shift
-			inputs = append(inputs, INPUT{
-				Type: INPUT_KEYBOARD,
-				Ki: KEYBDINPUT{
-					Wvk: VK_SHIFT,
-				},
-			})
+			appendVirtualKeyInput(&inputs, VK_SHIFT, false)
 		}
 
 		// Key down event
@@ -217,15 +296,15 @@ func TypeStringHardware(text string) error {
 		})
 
 		if shift {
-			// Release Shift
-			inputs = append(inputs, INPUT{
-				Type: INPUT_KEYBOARD,
-				Ki: KEYBDINPUT{
-					Wvk:     VK_SHIFT,
-					DwFlags: KEYEVENTF_KEYUP,
-				},
-			})
+			appendVirtualKeyInput(&inputs, VK_SHIFT, true)
 		}
+		if mods&0x04 != 0 {
+			appendVirtualKeyInput(&inputs, VK_MENU, true)
+		}
+		if mods&0x02 != 0 {
+			appendVirtualKeyInput(&inputs, VK_CONTROL, true)
+		}
+		mappedCount++
 	}
 
 	// Send inputs in chunks with delays for RDP sessions
@@ -247,6 +326,7 @@ func TypeStringHardware(text string) error {
 		time.Sleep(20 * time.Millisecond)
 	}
 
+	logger.Debug("TypeStringHardware summary: mapped=%d fallbackUnicode=%d", mappedCount, fallbackUnicodeCount)
 	logger.Debug("TypeStringHardware completed successfully: %s", text)
 	return nil
 }

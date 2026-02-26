@@ -105,6 +105,9 @@ type Macro struct {
 	Hotkey    string `yaml:"hotkey" json:"hotkey"`
 	Signature string `yaml:"signature" json:"signature"`
 	Text      string `yaml:"text" json:"text"`
+	Sequence  string `yaml:"sequence,omitempty" json:"sequence,omitempty"`
+	SequenceNormalizeDelays bool `yaml:"sequence_normalize_delays,omitempty" json:"sequenceNormalizeDelays,omitempty"`
+	SequenceDelayMs         int  `yaml:"sequence_delay_ms,omitempty" json:"sequenceDelayMs,omitempty"`
 	Mode      string `yaml:"mode" json:"mode"` // "type" (default), "paste", "type_hw", or "sequence"
 }
 
@@ -277,8 +280,17 @@ func validateConfig(cfg *Config) error {
 		if macro.Signature == "" {
 			return fmt.Errorf("macro %d has empty signature", i)
 		}
-		if _, err := base64.StdEncoding.DecodeString(macro.Signature); err != nil {
+		sig := macro.Signature
+		if strings.HasPrefix(sig, "sig:") {
+			sig = strings.TrimPrefix(sig, "sig:")
+		}
+		if _, err := base64.StdEncoding.DecodeString(sig); err != nil {
 			return fmt.Errorf("macro %d has invalid signature: %v", i, err)
+		}
+		if macro.Sequence != "" {
+			if _, err := base64.StdEncoding.DecodeString(macro.Sequence); err != nil {
+				return fmt.Errorf("macro %d has invalid sequence: %v", i, err)
+			}
 		}
 		if !validModes[macro.Mode] {
 			return fmt.Errorf("macro %d has invalid mode: %s", i, macro.Mode)

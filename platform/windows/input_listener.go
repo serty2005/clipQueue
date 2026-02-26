@@ -28,6 +28,12 @@ type InputListener struct {
 	captureMode atomic.Bool
 	captureChan chan InputSignature
 
+	sequenceRecordMode atomic.Bool
+	sequenceRecordHKL  uintptr
+	sequenceRecordAt   time.Time
+	sequenceLastEvent  time.Time
+	sequenceEvents     []RecordedKeyEvent
+
 	mu sync.Mutex
 }
 
@@ -109,6 +115,108 @@ func (l *InputListener) WaitForCapture(timeout time.Duration) (*InputSignature, 
 	}
 }
 
+func (l *InputListener) StartSequenceRecording() {
+	_, _, hkl := getForegroundKeyboardContext()
+
+	l.mu.Lock()
+	l.sequenceEvents = nil
+	l.sequenceRecordHKL = hkl
+	l.sequenceRecordAt = time.Now()
+	l.sequenceLastEvent = time.Time{}
+	l.mu.Unlock()
+
+	l.sequenceRecordMode.Store(true)
+	logger.Info("Sequence recording started (HKL=0x%X)", hkl)
+}
+
+func (l *InputListener) StopSequenceRecording() (*RecordedSequence, error) {
+	l.sequenceRecordMode.Store(false)
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if len(l.sequenceEvents) == 0 {
+		return nil, fmt.Errorf("no sequence events recorded")
+	}
+
+	events := make([]RecordedKeyEvent, len(l.sequenceEvents))
+	copy(events, l.sequenceEvents)
+
+	seq := &RecordedSequence{
+		Version:     1,
+		RecordedAt:  l.sequenceRecordAt,
+		RecordedHKL: uint64(l.sequenceRecordHKL),
+		Events:      events,
+	}
+
+	logger.Info("Sequence recording stopped: events=%d", len(events))
+	return seq, nil
+}
+
+func (l *InputListener) GetSequenceRecordingStatus(lastN int) SequenceRecordingStatus {
+	if lastN <= 0 {
+		lastN = 20
+	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	total := len(l.sequenceEvents)
+	start := 0
+	if total > lastN {
+		start = total - lastN
+	}
+
+	events := make([]RecordedKeyEvent, total-start)
+	copy(events, l.sequenceEvents[start:])
+
+	return SequenceRecordingStatus{
+		Active:      l.sequenceRecordMode.Load(),
+		EventCount:  total,
+		RecordedHKL: uint64(l.sequenceRecordHKL),
+		Events:      events,
+	}
+}
+
+func (l *InputListener) recordKeyboardEvent(kb *KBDLLHOOKSTRUCT, wParam uintptr) {
+	if !l.sequenceRecordMode.Load() {
+		return
+	}
+	if kb.Flags&llkhfInjected != 0 {
+		return
+	}
+
+	now := time.Now()
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if !l.sequenceRecordMode.Load() {
+		return
+	}
+
+	var delta uint32
+	if !l.sequenceLastEvent.IsZero() {
+		d := now.Sub(l.sequenceLastEvent) / time.Millisecond
+		if d < 0 {
+			d = 0
+		}
+		if d > 60000 {
+			d = 60000
+		}
+		delta = uint32(d)
+	}
+
+	l.sequenceEvents = append(l.sequenceEvents, RecordedKeyEvent{
+		VK:        uint16(kb.VkCode),
+		ScanCode:  uint16(kb.ScanCode),
+		HookFlags: kb.Flags,
+		Message:   uint32(wParam),
+		DelayMs:   delta,
+	})
+	l.sequenceLastEvent = now
+}
+
 // getCurrentModifiers получает текущее состояние модификаторов
 func (l *InputListener) getCurrentModifiers() uint8 {
 	var mods uint8
@@ -134,6 +242,7 @@ func (l *InputListener) setKeyboardHook() (uintptr, error) {
 	callback := func(nCode int, wParam uintptr, lParam uintptr) uintptr {
 		if nCode >= 0 && (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN || wParam == WM_KEYUP || wParam == WM_SYSKEYUP) {
 			kb := (*KBDLLHOOKSTRUCT)(unsafe.Pointer(lParam))
+			l.recordKeyboardEvent(kb, wParam)
 
 			// Игнорируем чистые модификаторы
 			if l.isModifierKey(kb.VkCode) {
