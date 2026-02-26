@@ -1322,7 +1322,7 @@
                     document.getElementById('macroMode').value = macro.mode || 'type';
                     document.getElementById('macroSequence').value = macro.sequence || '';
                     document.getElementById('sequenceNormalizeDelays').checked = !!macro.sequenceNormalizeDelays;
-                    document.getElementById('sequenceDelayMs').value = (macro.sequenceDelayMs ? 15);
+                    document.getElementById('sequenceDelayMs').value = (macro.sequenceDelayMs ?? 15);
                 }
             } else {
                 title.textContent = 'Добавить Макрос';
@@ -1502,7 +1502,7 @@
         }
 
         // Switch tab
-        function switchTab(tabName) {
+        function switchTab(tabName, evt) {
             // Hide all tab contents
             const tabContents = document.querySelectorAll('.tab-content');
             tabContents.forEach(content => content.classList.remove('active'));
@@ -1514,8 +1514,14 @@
             // Show selected tab content
             document.getElementById('tab-' + tabName).classList.add('active');
 
-            // Add active class to clicked button
-            event.target.classList.add('active');
+            // Add active class to the tab button (works for inline onclick and programmatic calls)
+            let activeButton = evt && evt.target ? evt.target : null;
+            if (!activeButton) {
+                activeButton = document.querySelector(`.tab-button[onclick="switchTab('${tabName}')"]`);
+            }
+            if (activeButton) {
+                activeButton.classList.add('active');
+            }
 
             // Handle history auto-refresh
             if (tabName === 'queue') {
@@ -1794,7 +1800,7 @@
                 if (index > 0) {
                     const connector = document.createElement('div');
                     connector.className = 'pipeline-connector';
-                    connector.textContent = 'в†'';
+                    connector.textContent = '->';
                     container.appendChild(connector);
                 }
 
