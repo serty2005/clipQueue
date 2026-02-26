@@ -796,6 +796,7 @@
 
     <div id="statusMessage" class="status-message"></div>
 
+    <script src="/app-api.js"></script>
     <script>
         let config = null;
         let editingHotkey = null;
@@ -938,13 +939,9 @@
             input.classList.add('recording');
             
             try {
-                const response = await fetch('/api/hotkeys/capture', {
-                    method: 'POST'
-                });
-                
-                const data = await response.json();
+                const data = await window.ClipQueueAPI.captureHotkey();
 
-                if (response.ok && data.display) {
+                if (data.display) {
                     input.value = data.display;
                     input.dataset.signature = data.signature;
                     if (inputId === 'macroHotkey') {
@@ -1049,9 +1046,7 @@
 
         async function pollSequenceStatusOnce() {
             try {
-                const response = await fetch('/api/sequence/status?last=24');
-                const data = await response.json();
-                if (!response.ok) throw new Error(data.error || 'Failed to get sequence status');
+                const data = await window.ClipQueueAPI.getSequenceStatus(24);
                 renderSequencePreview(data);
 
                 const startBtn = document.getElementById('sequenceStartBtn');
@@ -1082,9 +1077,7 @@
 
         async function startSequenceRecording() {
             try {
-                const response = await fetch('/api/sequence/start', { method: 'POST' });
-                const data = await response.json();
-                if (!response.ok) throw new Error(data.error || 'Failed to start sequence recording');
+                await window.ClipQueueAPI.startSequenceRecording();
 
                 document.getElementById('macroSequence').value = '';
                 document.getElementById('sequenceNormalizeDelays').checked = false;
@@ -1104,9 +1097,7 @@
 
         async function stopSequenceRecording() {
             try {
-                const response = await fetch('/api/sequence/stop', { method: 'POST' });
-                const data = await response.json();
-                if (!response.ok) throw new Error(data.error || 'Failed to stop sequence recording');
+                const data = await window.ClipQueueAPI.stopSequenceRecording();
 
                 document.getElementById('macroSequence').value = data.sequence || '';
                 sequenceRecording = false;

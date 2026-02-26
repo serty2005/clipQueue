@@ -16,7 +16,7 @@ import (
 	"github.com/serty2005/clipqueue/platform/windows"
 )
 
-//go:embed index.html
+//go:embed index.html app_api.js
 var embedFS embed.FS
 
 // HistoryItemDTO represents a history item for API responses
@@ -88,6 +88,7 @@ func NewServer(cfg *config.SafeConfig, host interface{}, controller *app.Control
 
 	// Настраиваем маршруты
 	mux.HandleFunc("/", s.handleIndex)
+	mux.HandleFunc("/app-api.js", s.handleAppAPIJS)
 	mux.HandleFunc("/api/config", s.handleConfig)
 	mux.HandleFunc("/api/hotkeys/capture", s.handleCaptureHotkey)
 	mux.HandleFunc("/api/history", s.handleHistory)
@@ -517,5 +518,17 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write(content)
+}
+
+func (s *Server) handleAppAPIJS(w http.ResponseWriter, r *http.Request) {
+	content, err := embedFS.ReadFile("app_api.js")
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprintf(w, "Error reading app_api.js: %v", err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 	w.Write(content)
 }

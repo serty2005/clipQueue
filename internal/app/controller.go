@@ -450,6 +450,13 @@ func (c *Controller) ExecuteMacro(macro config.Macro) error {
 		if macro.Sequence == "" {
 			return fmt.Errorf("sequence macro %q has no recorded sequence", macro.Name)
 		}
+		if macro.Hotkey != "" {
+			if err := windows.ReleaseHotkeyState(macro.Hotkey); err != nil {
+				logger.Debug("ReleaseHotkeyState failed for %q: %v", macro.Hotkey, err)
+			}
+			// Give the target window a moment to observe key-up before replay begins.
+			time.Sleep(20 * time.Millisecond)
+		}
 		opts := windows.SequencePlaybackOptions{
 			NormalizeDelays: macro.SequenceNormalizeDelays,
 		}

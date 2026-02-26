@@ -1,6 +1,7 @@
 package windows
 
 import (
+	"strings"
 	"syscall"
 	"time"
 	"unsafe"
@@ -129,6 +130,69 @@ func appendVirtualKeyInput(inputs *[]INPUT, vk uint16, keyUp bool) {
 			DwFlags: flags,
 		},
 	})
+}
+
+// ReleaseHotkeyState releases modifier and main keys from a hotkey display string
+// (e.g. "Ctrl+Alt+1") before replaying synthetic input sequences.
+func ReleaseHotkeyState(hotkey string) error {
+	if hotkey == "" {
+		return nil
+	}
+
+	var inputs []INPUT
+	seen := map[uint16]bool{}
+	parts := strings.Split(strings.ToUpper(hotkey), "+")
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		switch part {
+		case "CTRL", "CONTROL":
+			for _, vk := range []uint16{VK_CONTROL, VK_LCONTROL, VK_RCONTROL} {
+				if !seen[vk] && getAsyncKeyState(vk) {
+					appendVirtualKeyInput(&inputs, vk, true)
+					seen[vk] = true
+				}
+			}
+		case "ALT":
+			for _, vk := range []uint16{VK_MENU, VK_LMENU, VK_RMENU} {
+				if !seen[vk] && getAsyncKeyState(vk) {
+					appendVirtualKeyInput(&inputs, vk, true)
+					seen[vk] = true
+				}
+			}
+		case "SHIFT":
+			for _, vk := range []uint16{VK_SHIFT, VK_LSHIFT, VK_RSHIFT} {
+				if !seen[vk] && getAsyncKeyState(vk) {
+					appendVirtualKeyInput(&inputs, vk, true)
+					seen[vk] = true
+				}
+			}
+		case "WIN":
+			for _, vk := range []uint16{VK_LWIN, VK_RWIN} {
+				if !seen[vk] && getAsyncKeyState(vk) {
+					appendVirtualKeyInput(&inputs, vk, true)
+					seen[vk] = true
+				}
+			}
+		default:
+			if code, ok := keyMap[part]; ok {
+				vk := uint16(code)
+				if !seen[vk] && getAsyncKeyState(vk) {
+					appendVirtualKeyInput(&inputs, vk, true)
+					seen[vk] = true
+				}
+			}
+		}
+	}
+
+	if len(inputs) == 0 {
+		return nil
+	}
+	if result := sendInput(inputs); result != uint32(len(inputs)) {
+		logger.Error("ReleaseHotkeyState failed: only %d out of %d inputs sent", result, len(inputs))
+		return syscall.GetLastError()
+	}
+	logger.Debug("ReleaseHotkeyState completed for hotkey=%q", hotkey)
+	return nil
 }
 
 // SendInput sends input events to the system
