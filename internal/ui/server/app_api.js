@@ -1,5 +1,5 @@
 (function () {
-    async function request(path, options) {
+    let requestImpl = async function (path, options) {
         const response = await fetch(path, options || {});
         const contentType = response.headers.get('content-type') || '';
 
@@ -19,6 +19,17 @@
             throw err;
         }
         return data;
+    };
+
+    function setRequestImpl(fn) {
+        if (typeof fn !== 'function') {
+            throw new Error('transport-запрос должен быть функцией');
+        }
+        requestImpl = fn;
+    }
+
+    async function request(path, options) {
+        return requestImpl(path, options || {});
     }
 
     function postJSON(path, body) {
@@ -46,5 +57,11 @@
             const qs = typeof last === 'number' ? ('?last=' + encodeURIComponent(last)) : '';
             return request('/api/sequence/status' + qs);
         }
+    };
+
+    window.ClipQueueTransport = {
+        request,
+        postJSON,
+        setRequestImpl
     };
 })();

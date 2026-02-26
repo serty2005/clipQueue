@@ -12,6 +12,7 @@ import (
 	"github.com/serty2005/clipqueue/internal/config"
 	"github.com/serty2005/clipqueue/internal/logger"
 	"github.com/serty2005/clipqueue/internal/ui/server"
+	"github.com/serty2005/clipqueue/internal/uihost"
 	"github.com/serty2005/clipqueue/platform/windows"
 )
 
@@ -61,6 +62,7 @@ func main() {
 		logger.Error("Failed to start UI server: %v", err)
 		return
 	}
+	uiHost := uihost.NewPreferredUIHost(uiServer.GetURL())
 
 	// Set config update callback to reload hotkeys
 	uiServer.OnConfigUpdate = func() {
@@ -148,8 +150,8 @@ func main() {
 			go controller.ClearQueue()
 		case windows.ID_TRAY_SETTINGS:
 			logger.Debug("Tray settings command selected")
-			if err := windows.OpenBrowser(uiServer.GetURL()); err != nil {
-				logger.Error("Failed to open browser: %v", err)
+			if err := uiHost.Show(); err != nil {
+				logger.Error("Failed to show UI host: %v", err)
 			}
 		case windows.ID_TRAY_EXIT:
 			logger.Info("Tray exit command selected")
@@ -166,6 +168,10 @@ func main() {
 	logger.Info("Host started")
 
 	<-sigChan
+
+	if err := uiHost.Close(); err != nil {
+		logger.Warn("Failed to close UI host: %v", err)
+	}
 
 	// Shutdown - correct order: first host, then server
 	logger.Info("Host stopping...")
