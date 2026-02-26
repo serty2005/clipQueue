@@ -36,3 +36,7 @@ func (h *BrowserUIHost) Navigate(url string) error {
 	h.mu.Unlock()
 	return nil
 }
+
+func (h *BrowserUIHost) SetNativeBridge(bridge *NativeBridge) {}
+
+func (h *BrowserUIHost) NotifyNativeStateChanged() {}

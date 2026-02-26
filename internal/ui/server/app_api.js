@@ -40,31 +40,56 @@
         });
     }
 
-    window.ClipQueueAPI = {
-        request,
-        getConfig() { return request('/api/config'); },
-        saveConfig(cfg) { return postJSON('/api/config', cfg); },
-        captureHotkey() { return request('/api/hotkeys/capture', { method: 'POST' }); },
-        getHistory() { return request('/api/history'); },
-        getQueueState() { return request('/api/queue/state'); },
-        toggleQueue() { return request('/api/queue/toggle', { method: 'POST' }); },
-        toggleQueueOrder() { return request('/api/queue/order/toggle', { method: 'POST' }); },
-        copyHistoryItem(id) { return request('/api/copy?id=' + encodeURIComponent(id), { method: 'POST' }); },
-        clearQueue() { return request('/api/queue/clear', { method: 'POST' }); },
-        removeQueueItem(index) { return request('/api/history?index=' + encodeURIComponent(index), { method: 'DELETE' }); },
-        parseLab(command) { return postJSON('/api/lab/parse', { command }); },
-        buildLab(steps) { return postJSON('/api/lab/build', { steps }); },
-        startSequenceRecording() { return request('/api/sequence/start', { method: 'POST' }); },
-        stopSequenceRecording() { return request('/api/sequence/stop', { method: 'POST' }); },
-        getSequenceStatus(last) {
-            const qs = typeof last === 'number' ? ('?last=' + encodeURIComponent(last)) : '';
-            return request('/api/sequence/status' + qs);
-        }
-    };
+    function nativeAvailable() {
+        return typeof window.cqNativeGetConfig === 'function';
+    }
 
-    window.ClipQueueTransport = {
-        request,
-        postJSON,
-        setRequestImpl
-    };
+    function nativeAPI() {
+        return {
+            request,
+            getConfig() { return window.cqNativeGetConfig(); },
+            saveConfig(cfg) { return window.cqNativeSaveConfig(cfg); },
+            captureHotkey() { return window.cqNativeCaptureHotkey(); },
+            getHistory() { return window.cqNativeGetHistory(); },
+            getQueueState() { return window.cqNativeGetQueueState(); },
+            toggleQueue() { return window.cqNativeToggleQueue(); },
+            toggleQueueOrder() { return window.cqNativeToggleQueueOrder(); },
+            copyHistoryItem(id) { return window.cqNativeCopyHistoryItem(id); },
+            clearQueue() { return window.cqNativeClearQueue(); },
+            removeQueueItem(index) { return window.cqNativeRemoveQueueItem(index); },
+            parseLab(command) { return window.cqNativeParseLab(command); },
+            buildLab(steps) { return window.cqNativeBuildLab(steps); },
+            startSequenceRecording() { return window.cqNativeStartSequenceRecording(); },
+            stopSequenceRecording() { return window.cqNativeStopSequenceRecording(); },
+            getSequenceStatus(last) { return window.cqNativeGetSequenceStatus(typeof last === 'number' ? last : 30); }
+        };
+    }
+
+    function httpAPI() {
+        return {
+            request,
+            getConfig() { return request('/api/config'); },
+            saveConfig(cfg) { return postJSON('/api/config', cfg); },
+            captureHotkey() { return request('/api/hotkeys/capture', { method: 'POST' }); },
+            getHistory() { return request('/api/history'); },
+            getQueueState() { return request('/api/queue/state'); },
+            toggleQueue() { return request('/api/queue/toggle', { method: 'POST' }); },
+            toggleQueueOrder() { return request('/api/queue/order/toggle', { method: 'POST' }); },
+            copyHistoryItem(id) { return request('/api/copy?id=' + encodeURIComponent(id), { method: 'POST' }); },
+            clearQueue() { return request('/api/queue/clear', { method: 'POST' }); },
+            removeQueueItem(index) { return request('/api/history?index=' + encodeURIComponent(index), { method: 'DELETE' }); },
+            parseLab(command) { return postJSON('/api/lab/parse', { command }); },
+            buildLab(steps) { return postJSON('/api/lab/build', { steps }); },
+            startSequenceRecording() { return request('/api/sequence/start', { method: 'POST' }); },
+            stopSequenceRecording() { return request('/api/sequence/stop', { method: 'POST' }); },
+            getSequenceStatus(last) {
+                const qs = typeof last === 'number' ? ('?last=' + encodeURIComponent(last)) : '';
+                return request('/api/sequence/status' + qs);
+            }
+        };
+    }
+
+    window.ClipQueueAPI = nativeAvailable() ? nativeAPI() : httpAPI();
+    window.ClipQueueTransport = { request, postJSON, setRequestImpl };
 })();
+

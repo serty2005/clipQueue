@@ -98,3 +98,18 @@ func (h *FallbackUIHost) Navigate(url string) error {
 	}
 	return nil
 }
+
+func (h *FallbackUIHost) SetNativeBridge(bridge *NativeBridge) {
+	if cap, ok := h.primary.(NativeBridgeCapable); ok {
+		cap.SetNativeBridge(bridge)
+	}
+	if cap, ok := h.fallback.(NativeBridgeCapable); ok {
+		cap.SetNativeBridge(bridge)
+	}
+}
+
+func (h *FallbackUIHost) NotifyNativeStateChanged() {
+	if cap, ok := h.active().(NativeBridgeCapable); ok {
+		cap.NotifyNativeStateChanged()
+	}
+}

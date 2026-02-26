@@ -23,6 +23,7 @@ type Controller struct {
 	cfg                *config.Config
 	orderStrategy      string                                     // "LIFO" or "FIFO"
 	onStateChange      func(enabled bool, count int, mode string) // Callback for state changes
+	onUIRefresh        func()                                     // Callback for UI refresh notifications
 }
 
 // NewController creates a new instance of Controller
@@ -38,6 +39,7 @@ func NewController(cfg *config.Config) *Controller {
 		cfg:            cfg,
 		orderStrategy:  order,
 		onStateChange:  func(enabled bool, count int, mode string) {}, // Default empty callback
+		onUIRefresh:    func() {},
 	}
 }
 
@@ -48,16 +50,27 @@ func (c *Controller) SetStateCallback(fn func(enabled bool, count int, mode stri
 	c.onStateChange = fn
 }
 
+func (c *Controller) SetUIRefreshCallback(fn func()) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if fn == nil {
+		fn = func() {}
+	}
+	c.onUIRefresh = fn
+}
+
 // ClearQueue clears the clipboard queue
 func (c *Controller) ClearQueue() {
 	c.mu.Lock()
 	cb := c.onStateChange
+	uiCB := c.onUIRefresh
 	enabled := c.queueEnabled
 	mode := c.orderStrategy
 	if len(c.queue) == 0 {
 		c.mu.Unlock()
 		logger.Debug("ClearQueue skipped - queue is already empty")
 		cb(enabled, 0, mode)
+		uiCB()
 		return
 	}
 
@@ -65,6 +78,7 @@ func (c *Controller) ClearQueue() {
 	c.mu.Unlock()
 	logger.Info("Queue cleared")
 	cb(enabled, 0, mode)
+	uiCB()
 }
 
 // ToggleOrder toggles the queue order between LIFO and FIFO
@@ -76,6 +90,7 @@ func (c *Controller) ToggleOrder() {
 		c.orderStrategy = "LIFO"
 	}
 	cb := c.onStateChange
+	uiCB := c.onUIRefresh
 	enabled := c.queueEnabled
 	count := len(c.queue)
 	mode := c.orderStrategy
@@ -83,6 +98,7 @@ func (c *Controller) ToggleOrder() {
 
 	logger.Info("Queue order toggled to: %s", mode)
 	cb(enabled, count, mode)
+	uiCB()
 }
 
 // ToggleQueue toggles the queue mode on or off
@@ -94,21 +110,25 @@ func (c *Controller) ToggleQueue() {
 	if !c.queueEnabled {
 		c.queueEnabled = true
 		cb := c.onStateChange
+		uiCB := c.onUIRefresh
 		count := len(c.queue)
 		mode := c.orderStrategy
 		c.mu.Unlock()
 		logger.Info("Queue mode enabled")
 		cb(true, count, mode)
+		uiCB()
 	} else {
 		// Disable queue mode and clear queued markers while keeping history intact.
 		c.queueEnabled = false
 		c.queue = nil
 		cb := c.onStateChange
+		uiCB := c.onUIRefresh
 		mode := c.orderStrategy
 		c.mu.Unlock()
 
 		logger.Info("Queue mode disabled")
 		cb(false, 0, mode)
+		uiCB()
 	}
 }
 
@@ -137,7 +157,9 @@ func (c *Controller) OnClipboardUpdate() {
 	if content.Type == windows.Empty {
 		logger.Debug("OnClipboardUpdate: пропущен пустой контент")
 		c.currentClipboardID = ""
+		uiCB := c.onUIRefresh
 		c.mu.Unlock()
+		uiCB()
 		return
 	}
 
@@ -153,8 +175,10 @@ func (c *Controller) OnClipboardUpdate() {
 			}
 			if contentMatch {
 				c.currentClipboardID = last.ID
+				uiCB := c.onUIRefresh
 				logger.Debug("OnClipboardUpdate: пропущен дубликат контента")
 				c.mu.Unlock()
+				uiCB()
 				return
 			}
 		}
@@ -175,6 +199,7 @@ func (c *Controller) OnClipboardUpdate() {
 	if c.cfg.Features.EnableQueue && c.queueEnabled {
 		c.queue = append(c.queue, content)
 		cb := c.onStateChange
+		uiCB := c.onUIRefresh
 		enabled := c.queueEnabled
 		count := len(c.queue)
 		mode := c.orderStrategy
@@ -183,11 +208,14 @@ func (c *Controller) OnClipboardUpdate() {
 		logger.Info("OnClipboardUpdate: добавлено в очередь (тип=%s, размер=%d байт, предпросмотр=%q, длина очереди=%d)",
 			content.Type.String(), content.SizeBytes, content.Preview, count)
 		cb(enabled, count, mode)
+		uiCB()
 		return
 	}
 
+	uiCB := c.onUIRefresh
 	c.mu.Unlock()
 	logger.Debug("OnClipboardUpdate: не добавлено в очередь (режим очереди выключен или фича отключена)")
+	uiCB()
 }
 
 // PasteNext retrieves and pastes the next item from the clipboard queue
@@ -225,11 +253,13 @@ func (c *Controller) PasteNext() {
 	logger.Info("Dequeued clipboard content (type=%s, size=%d bytes, preview=%q, queue length=%d, order=%s)",
 		item.Type.String(), item.SizeBytes, item.Preview, len(c.queue), c.orderStrategy)
 	cb := c.onStateChange
+	uiCB := c.onUIRefresh
 	enabled := c.queueEnabled
 	count := len(c.queue)
 	mode := c.orderStrategy
 	c.mu.Unlock()
 	cb(enabled, count, mode)
+	uiCB()
 
 	// Save current clipboard state
 	logger.Debug("Saving current clipboard state before pasting")
@@ -270,6 +300,7 @@ func (c *Controller) PasteNext() {
 		logger.Error("Failed to restore previous clipboard state: %v", err)
 	}
 	c.addSelfEvent(windows.GetClipboardSequenceNumber())
+	c.onUIRefresh()
 }
 
 // GetQueue returns a copy of the clipboard queue with mutex protection
@@ -330,6 +361,7 @@ func (c *Controller) SetOrderStrategy(order string) error {
 
 	c.orderStrategy = order
 	cb := c.onStateChange
+	uiCB := c.onUIRefresh
 	enabled := c.queueEnabled
 	count := len(c.queue)
 	mode := c.orderStrategy
@@ -337,6 +369,7 @@ func (c *Controller) SetOrderStrategy(order string) error {
 
 	logger.Info("SetOrderStrategy: order strategy changed to %s", mode)
 	cb(enabled, count, mode)
+	uiCB()
 	return nil
 }
 
@@ -351,6 +384,7 @@ func (c *Controller) RemoveItem(index int) error {
 
 	c.queue = append(c.queue[:index], c.queue[index+1:]...)
 	cb := c.onStateChange
+	uiCB := c.onUIRefresh
 	enabled := c.queueEnabled
 	count := len(c.queue)
 	mode := c.orderStrategy
@@ -358,6 +392,7 @@ func (c *Controller) RemoveItem(index int) error {
 
 	logger.Info("Removed item at index %d, queue length now: %d", index, count)
 	cb(enabled, count, mode)
+	uiCB()
 	return nil
 }
 
@@ -487,19 +522,23 @@ func (c *Controller) ExecuteMacro(macro config.Macro) error {
 // CopyItem copies an item from history to clipboard by ID
 func (c *Controller) CopyItem(id string) error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 
 	for _, item := range c.history {
 		if item.ID == id {
 			err := windows.Write(item)
 			if err != nil {
+				c.mu.Unlock()
 				return err
 			}
 			c.currentClipboardID = id
 			c.addSelfEventLocked(windows.GetClipboardSequenceNumber())
+			uiCB := c.onUIRefresh
+			c.mu.Unlock()
 			logger.Info("Copied item from history to clipboard (id=%s, type=%s)", id, item.Type.String())
+			go uiCB()
 			return nil
 		}
 	}
+	c.mu.Unlock()
 	return fmt.Errorf("item with id %s not found in history", id)
 }

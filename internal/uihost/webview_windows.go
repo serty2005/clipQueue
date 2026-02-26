@@ -3,6 +3,7 @@
 package uihost
 
 import (
+	"encoding/json"
 	"fmt"
 	"runtime"
 	"sync"
@@ -11,6 +12,7 @@ import (
 
 	webview2 "github.com/jchv/go-webview2"
 	"github.com/serty2005/clipqueue/internal/logger"
+	"github.com/serty2005/clipqueue/platform/windows"
 )
 
 const (
@@ -80,6 +82,8 @@ type WebViewUIHost struct {
 	visible    bool
 	closed     bool
 	started    bool
+
+	bridge *NativeBridge
 }
 
 type rect struct {
@@ -100,6 +104,12 @@ func NewWebViewUIHost(url string) *WebViewUIHost {
 	}
 }
 
+func (h *WebViewUIHost) SetNativeBridge(bridge *NativeBridge) {
+	h.mu.Lock()
+	h.bridge = bridge
+	h.mu.Unlock()
+}
+
 func (h *WebViewUIHost) ensureReady() error {
 	h.readyOnce.Do(func() {
 		h.mu.Lock()
@@ -116,6 +126,7 @@ func (h *WebViewUIHost) ensureReady() error {
 func (h *WebViewUIHost) runUIThread() {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
+	windows.ApplyCurrentThreadHighDPIAwareness()
 
 	h.mu.RLock()
 	title := h.title
@@ -154,6 +165,7 @@ func (h *WebViewUIHost) runUIThread() {
 	}
 
 	h.applyFramelessStyle(hwnd)
+	h.bindNativeBridge(wv)
 	h.installWindowSubclasses(hwnd)
 	_, _, _ = procShowWindowUIHost.Call(hwnd, swHide)
 	if url != "" {
@@ -285,7 +297,7 @@ func webViewHostWndProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintpt
 func (h *WebViewUIHost) hitTest(hwnd uintptr, lParam uintptr) (uintptr, bool) {
 	const (
 		resizeBorderPx = int32(8)
-		dragCaptionPx  = int32(44)
+		dragCaptionPx  = int32(8)
 	)
 
 	var r rect
@@ -327,6 +339,147 @@ func (h *WebViewUIHost) hitTest(hwnd uintptr, lParam uintptr) (uintptr, bool) {
 		return htCaption, true
 	}
 	return htClient, true
+}
+
+func (h *WebViewUIHost) bindNativeBridge(wv webview2.WebView) {
+	h.mu.RLock()
+	bridge := h.bridge
+	h.mu.RUnlock()
+	if bridge == nil {
+		return
+	}
+
+	wv.Init(`window.__clipQueueNativePush = window.__clipQueueNativePush || function(){};`)
+
+	mustBind := func(name string, fn interface{}) {
+		if err := wv.Bind(name, fn); err != nil {
+			logger.Warn("Не удалось зарегистрировать native bridge метод %s: %v", name, err)
+		}
+	}
+
+	mustBind("cqNativeAvailable", func() bool { return true })
+	mustBind("cqNativeGetConfig", func() (interface{}, error) {
+		if bridge.GetConfig == nil {
+			return nil, fmt.Errorf("native get config bridge not configured")
+		}
+		return bridge.GetConfig()
+	})
+	mustBind("cqNativeSaveConfig", func(cfg map[string]interface{}) (interface{}, error) {
+		if bridge.SaveConfig == nil {
+			return nil, fmt.Errorf("native save config bridge not configured")
+		}
+		return bridge.SaveConfig(cfg)
+	})
+	mustBind("cqNativeCaptureHotkey", func() (interface{}, error) {
+		if bridge.CaptureHotkey == nil {
+			return nil, fmt.Errorf("native capture hotkey bridge not configured")
+		}
+		return bridge.CaptureHotkey()
+	})
+	mustBind("cqNativeGetUISnapshot", func() (interface{}, error) {
+		if bridge.GetUISnapshot == nil {
+			return nil, fmt.Errorf("native snapshot bridge not configured")
+		}
+		return bridge.GetUISnapshot()
+	})
+	mustBind("cqNativeToggleQueue", func() (interface{}, error) {
+		if bridge.ToggleQueue == nil {
+			return nil, fmt.Errorf("native toggle queue bridge not configured")
+		}
+		return bridge.ToggleQueue()
+	})
+	mustBind("cqNativeToggleQueueOrder", func() (interface{}, error) {
+		if bridge.ToggleQueueOrder == nil {
+			return nil, fmt.Errorf("native toggle queue order bridge not configured")
+		}
+		return bridge.ToggleQueueOrder()
+	})
+	mustBind("cqNativeClearQueue", func() (interface{}, error) {
+		if bridge.ClearQueue == nil {
+			return nil, fmt.Errorf("native clear queue bridge not configured")
+		}
+		return bridge.ClearQueue()
+	})
+	mustBind("cqNativeCopyHistoryItem", func(id string) (interface{}, error) {
+		if bridge.CopyHistoryItem == nil {
+			return nil, fmt.Errorf("native copy history bridge not configured")
+		}
+		return bridge.CopyHistoryItem(id)
+	})
+	mustBind("cqNativeGetHistory", func() (interface{}, error) {
+		if bridge.GetHistory == nil {
+			return nil, fmt.Errorf("native get history bridge not configured")
+		}
+		return bridge.GetHistory()
+	})
+	mustBind("cqNativeGetQueueState", func() (interface{}, error) {
+		if bridge.GetQueueState == nil {
+			return nil, fmt.Errorf("native get queue state bridge not configured")
+		}
+		return bridge.GetQueueState()
+	})
+	mustBind("cqNativeRemoveQueueItem", func(index int) (interface{}, error) {
+		if bridge.RemoveQueueItem == nil {
+			return nil, fmt.Errorf("native remove queue item bridge not configured")
+		}
+		return bridge.RemoveQueueItem(index)
+	})
+	mustBind("cqNativeParseLab", func(command string) (interface{}, error) {
+		if bridge.ParseLab == nil {
+			return nil, fmt.Errorf("native parse lab bridge not configured")
+		}
+		return bridge.ParseLab(command)
+	})
+	mustBind("cqNativeBuildLab", func(steps []map[string]interface{}) (interface{}, error) {
+		if bridge.BuildLab == nil {
+			return nil, fmt.Errorf("native build lab bridge not configured")
+		}
+		return bridge.BuildLab(steps)
+	})
+	mustBind("cqNativeStartSequenceRecording", func() (interface{}, error) {
+		if bridge.StartSequence == nil {
+			return nil, fmt.Errorf("native start sequence bridge not configured")
+		}
+		return bridge.StartSequence()
+	})
+	mustBind("cqNativeStopSequenceRecording", func() (interface{}, error) {
+		if bridge.StopSequence == nil {
+			return nil, fmt.Errorf("native stop sequence bridge not configured")
+		}
+		return bridge.StopSequence()
+	})
+	mustBind("cqNativeGetSequenceStatus", func(last int) (interface{}, error) {
+		if bridge.GetSequenceStatus == nil {
+			return nil, fmt.Errorf("native get sequence status bridge not configured")
+		}
+		return bridge.GetSequenceStatus(last)
+	})
+}
+
+func (h *WebViewUIHost) NotifyNativeStateChanged() {
+	h.mu.RLock()
+	bridge := h.bridge
+	ready := h.wv != nil && h.hwnd != 0 && !h.closed
+	h.mu.RUnlock()
+	if bridge == nil || bridge.GetUISnapshot == nil || !ready {
+		return
+	}
+
+	if err := h.dispatch(func(wv webview2.WebView, hwnd uintptr) {
+		snapshot, err := bridge.GetUISnapshot()
+		if err != nil {
+			logger.Warn("Ошибка получения native snapshot: %v", err)
+			return
+		}
+		payload, err := json.Marshal(snapshot)
+		if err != nil {
+			logger.Warn("Ошибка сериализации native snapshot: %v", err)
+			return
+		}
+		wv.Eval(`window.__clipQueueNativePush && window.__clipQueueNativePush(` + string(payload) + `);`)
+	}); err != nil {
+		logger.Debug("NotifyNativeStateChanged skipped: %v", err)
+	}
 }
 
 func (h *WebViewUIHost) dispatch(action func(wv webview2.WebView, hwnd uintptr)) error {

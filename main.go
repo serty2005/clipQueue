@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
@@ -28,6 +29,9 @@ func main() {
 	if cfg.App.Silent {
 		windows.HideConsole()
 	}
+
+	// Включаем DPI awareness до создания окон, чтобы избежать bitmap-масштабирования и размытия UI.
+	windows.EnableHighDPIAwareness()
 
 	// Initialize logger with silent parameter
 	if err := logger.Init(cfg.App.Silent); err != nil {
@@ -63,6 +67,74 @@ func main() {
 		return
 	}
 	uiHost := uihost.NewPreferredUIHost(uiServer.GetURL())
+	if nativeUI, ok := uiHost.(uihost.NativeBridgeCapable); ok {
+		nativeUI.SetNativeBridge(&uihost.NativeBridge{
+			GetUISnapshot: func() (interface{}, error) {
+				return uiServer.GetUISnapshot(), nil
+			},
+			GetConfig: func() (interface{}, error) {
+				return uiServer.NativeGetConfig(), nil
+			},
+			SaveConfig: func(cfgMap map[string]interface{}) (interface{}, error) {
+				raw, err := json.Marshal(cfgMap)
+				if err != nil {
+					return nil, err
+				}
+				var cfg config.Config
+				if err := json.Unmarshal(raw, &cfg); err != nil {
+					return nil, err
+				}
+				return uiServer.NativeSaveConfig(cfg)
+			},
+			CaptureHotkey: func() (interface{}, error) {
+				return uiServer.NativeCaptureHotkey()
+			},
+			GetHistory: func() (interface{}, error) {
+				return uiServer.NativeGetHistory(), nil
+			},
+			GetQueueState: func() (interface{}, error) {
+				return uiServer.NativeGetQueueState(), nil
+			},
+			ToggleQueue: func() (interface{}, error) {
+				return uiServer.NativeToggleQueue(), nil
+			},
+			ToggleQueueOrder: func() (interface{}, error) {
+				return uiServer.NativeToggleQueueOrder(), nil
+			},
+			ClearQueue: func() (interface{}, error) {
+				return uiServer.NativeClearQueue(), nil
+			},
+			CopyHistoryItem: func(id string) (interface{}, error) {
+				return uiServer.NativeCopyHistoryItem(id)
+			},
+			RemoveQueueItem: func(index int) (interface{}, error) {
+				return uiServer.NativeRemoveQueueItem(index)
+			},
+			ParseLab: func(command string) (interface{}, error) {
+				return uiServer.NativeParseLab(command)
+			},
+			BuildLab: func(stepsRaw []map[string]interface{}) (interface{}, error) {
+				raw, err := json.Marshal(stepsRaw)
+				if err != nil {
+					return nil, err
+				}
+				var steps []server.CommandStepDTO
+				if err := json.Unmarshal(raw, &steps); err != nil {
+					return nil, err
+				}
+				return uiServer.NativeBuildLab(steps)
+			},
+			StartSequence: func() (interface{}, error) {
+				return uiServer.NativeStartSequenceRecording()
+			},
+			StopSequence: func() (interface{}, error) {
+				return uiServer.NativeStopSequenceRecording()
+			},
+			GetSequenceStatus: func(last int) (interface{}, error) {
+				return uiServer.NativeGetSequenceStatus(last)
+			},
+		})
+	}
 
 	// Set config update callback to reload hotkeys
 	uiServer.OnConfigUpdate = func() {
@@ -82,6 +154,11 @@ func main() {
 		}
 		if err := host.UpdateTrayTooltip(tooltip); err != nil {
 			logger.Error("Failed to update tray tooltip: %v", err)
+		}
+	})
+	controller.SetUIRefreshCallback(func() {
+		if nativeUI, ok := uiHost.(uihost.NativeBridgeCapable); ok {
+			nativeUI.NotifyNativeStateChanged()
 		}
 	})
 
