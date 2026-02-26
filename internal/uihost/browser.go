@@ -40,3 +40,5 @@ func (h *BrowserUIHost) Navigate(url string) error {
 func (h *BrowserUIHost) SetNativeBridge(bridge *NativeBridge) {}
 
 func (h *BrowserUIHost) NotifyNativeStateChanged() {}
+
+func (h *BrowserUIHost) NotifyNativeMacroInvoke(name string, done bool) {}

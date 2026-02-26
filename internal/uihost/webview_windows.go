@@ -349,7 +349,7 @@ func (h *WebViewUIHost) bindNativeBridge(wv webview2.WebView) {
 		return
 	}
 
-	wv.Init(`window.__clipQueueNativePush = window.__clipQueueNativePush || function(){};`)
+	wv.Init(`window.__clipQueueNativePush = window.__clipQueueNativePush || function(){}; window.__clipQueueNativeEvent = window.__clipQueueNativeEvent || function(){};`)
 
 	mustBind := func(name string, fn interface{}) {
 		if err := wv.Bind(name, fn); err != nil {
@@ -479,6 +479,29 @@ func (h *WebViewUIHost) NotifyNativeStateChanged() {
 		wv.Eval(`window.__clipQueueNativePush && window.__clipQueueNativePush(` + string(payload) + `);`)
 	}); err != nil {
 		logger.Debug("NotifyNativeStateChanged skipped: %v", err)
+	}
+}
+
+func (h *WebViewUIHost) NotifyNativeMacroInvoke(name string, done bool) {
+	h.mu.RLock()
+	ready := h.wv != nil && h.hwnd != 0 && !h.closed
+	h.mu.RUnlock()
+	if !ready {
+		return
+	}
+	payload, err := json.Marshal(map[string]interface{}{
+		"type": "macroInvoke",
+		"name": name,
+		"done": done,
+	})
+	if err != nil {
+		logger.Warn("Ошибка сериализации события macroInvoke: %v", err)
+		return
+	}
+	if err := h.dispatch(func(wv webview2.WebView, hwnd uintptr) {
+		wv.Eval(`window.__clipQueueNativeEvent && window.__clipQueueNativeEvent(` + string(payload) + `);`)
+	}); err != nil {
+		logger.Debug("NotifyNativeMacroInvoke skipped: %v", err)
 	}
 }
 

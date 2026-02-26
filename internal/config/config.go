@@ -101,14 +101,15 @@ func generateSignatureFromHotkey(hotkeyString string) (string, error) {
 }
 
 type Macro struct {
-	Name      string `yaml:"name" json:"name"`
-	Hotkey    string `yaml:"hotkey" json:"hotkey"`
-	Signature string `yaml:"signature" json:"signature"`
-	Text      string `yaml:"text" json:"text"`
-	Sequence  string `yaml:"sequence,omitempty" json:"sequence,omitempty"`
-	SequenceNormalizeDelays bool `yaml:"sequence_normalize_delays,omitempty" json:"sequenceNormalizeDelays,omitempty"`
-	SequenceDelayMs         int  `yaml:"sequence_delay_ms,omitempty" json:"sequenceDelayMs,omitempty"`
-	Mode      string `yaml:"mode" json:"mode"` // "type" (default), "paste", "type_hw", or "sequence"
+	Name                    string `yaml:"name" json:"name"`
+	Hotkey                  string `yaml:"hotkey" json:"hotkey"`
+	Signature               string `yaml:"signature" json:"signature"`
+	Enabled                 bool   `yaml:"enabled,omitempty" json:"enabled"`
+	Text                    string `yaml:"text" json:"text"`
+	Sequence                string `yaml:"sequence,omitempty" json:"sequence,omitempty"`
+	SequenceNormalizeDelays bool   `yaml:"sequence_normalize_delays,omitempty" json:"sequenceNormalizeDelays,omitempty"`
+	SequenceDelayMs         int    `yaml:"sequence_delay_ms,omitempty" json:"sequenceDelayMs,omitempty"`
+	Mode                    string `yaml:"mode" json:"mode"` // "type" (default), "paste", "type_hw", or "sequence"
 }
 
 // UnmarshalYAML implements custom YAML unmarshaling for backward compatibility
@@ -121,13 +122,34 @@ func (m *Macro) UnmarshalYAML(value *yaml.Node) error {
 		}
 		m.Mode = "type"
 	case yaml.MappingNode:
-		type macroAlias Macro // Алиас, чтобы избежать рекурсии методов
-		var aux macroAlias
+		type macroDecoded struct {
+			Name                    string `yaml:"name"`
+			Hotkey                  string `yaml:"hotkey"`
+			Signature               string `yaml:"signature"`
+			Enabled                 *bool  `yaml:"enabled"`
+			Text                    string `yaml:"text"`
+			Sequence                string `yaml:"sequence"`
+			SequenceNormalizeDelays bool   `yaml:"sequence_normalize_delays"`
+			SequenceDelayMs         int    `yaml:"sequence_delay_ms"`
+			Mode                    string `yaml:"mode"`
+		}
+		var aux macroDecoded
 		if err := value.Decode(&aux); err != nil {
 			return err
 		}
-		*m = Macro(aux)
-		// Set default mode if not specified
+		m.Name = aux.Name
+		m.Hotkey = aux.Hotkey
+		m.Signature = aux.Signature
+		m.Text = aux.Text
+		m.Sequence = aux.Sequence
+		m.SequenceNormalizeDelays = aux.SequenceNormalizeDelays
+		m.SequenceDelayMs = aux.SequenceDelayMs
+		m.Mode = aux.Mode
+		if aux.Enabled == nil {
+			m.Enabled = true
+		} else {
+			m.Enabled = *aux.Enabled
+		}
 		if m.Mode == "" {
 			m.Mode = "type"
 		}
@@ -339,6 +361,7 @@ func Load() (*Config, error) {
 				Name:      sig,
 				Hotkey:    sig,
 				Signature: generatedSig,
+				Enabled:   true,
 				Text:      macro.Text,
 				Mode:      macro.Mode,
 			})

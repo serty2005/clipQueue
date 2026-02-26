@@ -113,3 +113,9 @@ func (h *FallbackUIHost) NotifyNativeStateChanged() {
 		cap.NotifyNativeStateChanged()
 	}
 }
+
+func (h *FallbackUIHost) NotifyNativeMacroInvoke(name string, done bool) {
+	if cap, ok := h.active().(NativeBridgeCapable); ok {
+		cap.NotifyNativeMacroInvoke(name, done)
+	}
+}

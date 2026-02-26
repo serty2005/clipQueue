@@ -169,6 +169,10 @@ func (h *Host) registerConfiguredHotkeys() {
 	// Макросы
 	if cfg.Features.EnableMacros {
 		for _, macro := range cfg.Macros {
+			if !macro.Enabled {
+				logger.Info("Макрос отключён, регистрация пропущена: %s", macro.Name)
+				continue
+			}
 			m := macro
 			hotkeyStr := macro.Signature
 			sig := h.parseHotkeyToSignature(hotkeyStr)

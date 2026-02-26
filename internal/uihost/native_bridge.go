@@ -23,4 +23,5 @@ type NativeBridge struct {
 type NativeBridgeCapable interface {
 	SetNativeBridge(bridge *NativeBridge)
 	NotifyNativeStateChanged()
+	NotifyNativeMacroInvoke(name string, done bool)
 }

@@ -161,6 +161,11 @@ func main() {
 			nativeUI.NotifyNativeStateChanged()
 		}
 	})
+	controller.SetMacroInvokeCallback(func(name string, done bool) {
+		if nativeUI, ok := uiHost.(uihost.NativeBridgeCapable); ok {
+			nativeUI.NotifyNativeMacroInvoke(name, done)
+		}
+	})
 
 	// Setup event handlers
 	host.OnHotkeyToggleQueue(func() {

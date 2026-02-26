@@ -24,6 +24,7 @@ type Controller struct {
 	orderStrategy      string                                     // "LIFO" or "FIFO"
 	onStateChange      func(enabled bool, count int, mode string) // Callback for state changes
 	onUIRefresh        func()                                     // Callback for UI refresh notifications
+	onMacroInvoke      func(name string, done bool)               // Callback for macro execution UI notifications
 }
 
 // NewController creates a new instance of Controller
@@ -40,6 +41,7 @@ func NewController(cfg *config.Config) *Controller {
 		orderStrategy:  order,
 		onStateChange:  func(enabled bool, count int, mode string) {}, // Default empty callback
 		onUIRefresh:    func() {},
+		onMacroInvoke:  func(name string, done bool) {},
 	}
 }
 
@@ -57,6 +59,15 @@ func (c *Controller) SetUIRefreshCallback(fn func()) {
 		fn = func() {}
 	}
 	c.onUIRefresh = fn
+}
+
+func (c *Controller) SetMacroInvokeCallback(fn func(name string, done bool)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if fn == nil {
+		fn = func(name string, done bool) {}
+	}
+	c.onMacroInvoke = fn
 }
 
 // ClearQueue clears the clipboard queue
@@ -424,6 +435,11 @@ func (c *Controller) isSelfEvent(seq uint32) bool {
 // ExecuteMacro выполняет макрос с заданным текстом и режимом
 func (c *Controller) ExecuteMacro(macro config.Macro) error {
 	logger.Info("Executing macro with text: %q, mode: %s", macro.Text, macro.Mode)
+	c.mu.Lock()
+	macroCB := c.onMacroInvoke
+	c.mu.Unlock()
+	macroCB(macro.Name, false)
+	defer macroCB(macro.Name, true)
 
 	switch macro.Mode {
 	case "type":
