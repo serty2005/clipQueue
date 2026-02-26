@@ -306,6 +306,13 @@ func (c *Controller) GetOrderStrategy() string {
 	return c.orderStrategy
 }
 
+// GetQueueState returns current queue UI state snapshot.
+func (c *Controller) GetQueueState() (enabled bool, count int, order string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.queueEnabled, len(c.queue), c.orderStrategy
+}
+
 // SetOrderStrategy sets the queue order strategy (LIFO or FIFO)
 func (c *Controller) SetOrderStrategy(order string) error {
 	c.mu.Lock()

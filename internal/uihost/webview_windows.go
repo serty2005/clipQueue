@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"sync"
 	"syscall"
+	"unsafe"
 
 	webview2 "github.com/jchv/go-webview2"
 	"github.com/serty2005/clipqueue/internal/logger"
@@ -15,6 +16,7 @@ import (
 const (
 	wsPopup            = 0x80000000
 	wsVisible          = 0x10000000
+	wsThickFrame       = 0x00040000
 	wsOverlappedWindow = 0x00CF0000
 
 	swHide    = 0
@@ -26,17 +28,40 @@ const (
 	swpNoZOrder     = 0x0004
 	swpNoActivate   = 0x0010
 	swpFrameChanged = 0x0020
+
+	gwlpWndProc = -4
+
+	wmNCHitTest = 0x0084
+
+	htClient      = 1
+	htCaption     = 2
+	htLeft        = 10
+	htRight       = 11
+	htTop         = 12
+	htTopLeft     = 13
+	htTopRight    = 14
+	htBottom      = 15
+	htBottomLeft  = 16
+	htBottomRight = 17
 )
 
 var (
 	user32UIHost            = syscall.NewLazyDLL("user32.dll")
 	procGetWindowLongPtrW   = user32UIHost.NewProc("GetWindowLongPtrW")
 	procSetWindowLongPtrW   = user32UIHost.NewProc("SetWindowLongPtrW")
+	procCallWindowProcW     = user32UIHost.NewProc("CallWindowProcW")
 	procSetWindowPos        = user32UIHost.NewProc("SetWindowPos")
 	procShowWindowUIHost    = user32UIHost.NewProc("ShowWindow")
 	procSetForegroundWindow = user32UIHost.NewProc("SetForegroundWindow")
 	procSetFocusUIHost      = user32UIHost.NewProc("SetFocus")
 	procIsWindowVisible     = user32UIHost.NewProc("IsWindowVisible")
+	procGetWindowRect       = user32UIHost.NewProc("GetWindowRect")
+	procEnumChildWindows    = user32UIHost.NewProc("EnumChildWindows")
+
+	webViewHostWndProcOnce sync.Once
+	webViewHostWndProcPtr  uintptr
+	webViewHostWndProcMu   sync.RWMutex
+	webViewHostWndProcMap  = map[uintptr]*WebViewUIHost{}
 )
 
 type WebViewUIHost struct {
@@ -49,20 +74,29 @@ type WebViewUIHost struct {
 	readyDone chan struct{}
 	readyErr  error
 
-	wv      webview2.WebView
-	hwnd    uintptr
-	visible bool
-	closed  bool
-	started bool
+	wv         webview2.WebView
+	hwnd       uintptr
+	subclassed map[uintptr]uintptr // hwnd -> previous wndproc
+	visible    bool
+	closed     bool
+	started    bool
+}
+
+type rect struct {
+	Left   int32
+	Top    int32
+	Right  int32
+	Bottom int32
 }
 
 func NewWebViewUIHost(url string) *WebViewUIHost {
 	return &WebViewUIHost{
-		title:     "ClipQueue",
-		url:       url,
-		width:     980,
-		height:    760,
-		readyDone: make(chan struct{}),
+		title:      "ClipQueue",
+		url:        url,
+		width:      500,
+		height:     250,
+		readyDone:  make(chan struct{}),
+		subclassed: make(map[uintptr]uintptr),
 	}
 }
 
@@ -120,6 +154,7 @@ func (h *WebViewUIHost) runUIThread() {
 	}
 
 	h.applyFramelessStyle(hwnd)
+	h.installWindowSubclasses(hwnd)
 	_, _, _ = procShowWindowUIHost.Call(hwnd, swHide)
 	if url != "" {
 		wv.Navigate(url)
@@ -140,9 +175,12 @@ func (h *WebViewUIHost) runUIThread() {
 	h.mu.Lock()
 	h.wv = nil
 	h.hwnd = 0
+	h.subclassed = map[uintptr]uintptr{}
 	h.visible = false
 	h.closed = true
 	h.mu.Unlock()
+
+	h.unregisterSubclasses()
 
 	logger.Info("WebView UI host stopped")
 }
@@ -150,7 +188,7 @@ func (h *WebViewUIHost) runUIThread() {
 func (h *WebViewUIHost) applyFramelessStyle(hwnd uintptr) {
 	styleIndex := ^uintptr(15) // GWL_STYLE == -16
 	style, _, _ := procGetWindowLongPtrW.Call(hwnd, styleIndex)
-	style = (style &^ wsOverlappedWindow) | wsPopup | wsVisible
+	style = (style &^ wsOverlappedWindow) | wsPopup | wsVisible | wsThickFrame
 	procSetWindowLongPtrW.Call(hwnd, styleIndex, style)
 	procSetWindowPos.Call(
 		hwnd,
@@ -158,6 +196,137 @@ func (h *WebViewUIHost) applyFramelessStyle(hwnd uintptr) {
 		0, 0, 0, 0,
 		swpNoMove|swpNoSize|swpNoZOrder|swpNoActivate|swpFrameChanged,
 	)
+}
+
+func ensureWebViewHostWndProc() uintptr {
+	webViewHostWndProcOnce.Do(func() {
+		webViewHostWndProcPtr = syscall.NewCallback(webViewHostWndProc)
+	})
+	return webViewHostWndProcPtr
+}
+
+func (h *WebViewUIHost) installWindowSubclasses(rootHWND uintptr) {
+	h.installSingleSubclass(rootHWND)
+
+	enumCB := syscall.NewCallback(func(childHWND, lParam uintptr) uintptr {
+		host := (*WebViewUIHost)(unsafe.Pointer(lParam))
+		host.installSingleSubclass(childHWND)
+		return 1
+	})
+	procEnumChildWindows.Call(rootHWND, enumCB, uintptr(unsafe.Pointer(h)))
+}
+
+func (h *WebViewUIHost) installSingleSubclass(hwnd uintptr) {
+	h.mu.RLock()
+	_, exists := h.subclassed[hwnd]
+	h.mu.RUnlock()
+	if exists {
+		return
+	}
+
+	wndProcIndex := ^uintptr(3) // GWLP_WNDPROC == -4
+	prev, _, _ := procSetWindowLongPtrW.Call(hwnd, wndProcIndex, ensureWebViewHostWndProc())
+
+	h.mu.Lock()
+	if h.subclassed == nil {
+		h.subclassed = make(map[uintptr]uintptr)
+	}
+	h.subclassed[hwnd] = prev
+	h.mu.Unlock()
+
+	webViewHostWndProcMu.Lock()
+	webViewHostWndProcMap[hwnd] = h
+	webViewHostWndProcMu.Unlock()
+}
+
+func (h *WebViewUIHost) unregisterSubclasses() {
+	h.mu.RLock()
+	prevMap := make(map[uintptr]uintptr, len(h.subclassed))
+	for hwnd, prev := range h.subclassed {
+		prevMap[hwnd] = prev
+	}
+	h.mu.RUnlock()
+
+	wndProcIndex := ^uintptr(3) // GWLP_WNDPROC == -4
+	for hwnd, prev := range prevMap {
+		if prev != 0 {
+			procSetWindowLongPtrW.Call(hwnd, wndProcIndex, prev)
+		}
+		webViewHostWndProcMu.Lock()
+		delete(webViewHostWndProcMap, hwnd)
+		webViewHostWndProcMu.Unlock()
+	}
+}
+
+func webViewHostWndProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
+	webViewHostWndProcMu.RLock()
+	h := webViewHostWndProcMap[hwnd]
+	webViewHostWndProcMu.RUnlock()
+	if h == nil {
+		return 0
+	}
+
+	h.mu.RLock()
+	prev := h.subclassed[hwnd]
+	rootHWND := h.hwnd
+	h.mu.RUnlock()
+	if msg == wmNCHitTest && rootHWND != 0 {
+		if hit, ok := h.hitTest(rootHWND, lParam); ok {
+			return hit
+		}
+	}
+	if prev != 0 {
+		ret, _, _ := procCallWindowProcW.Call(prev, hwnd, uintptr(msg), wParam, lParam)
+		return ret
+	}
+	return 0
+}
+
+func (h *WebViewUIHost) hitTest(hwnd uintptr, lParam uintptr) (uintptr, bool) {
+	const (
+		resizeBorderPx = int32(8)
+		dragCaptionPx  = int32(44)
+	)
+
+	var r rect
+	if ok, _, _ := procGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&r))); ok == 0 {
+		return 0, false
+	}
+
+	x := int32(int16(lParam & 0xFFFF))
+	y := int32(int16((lParam >> 16) & 0xFFFF))
+	width := r.Right - r.Left
+	height := r.Bottom - r.Top
+	if width <= 0 || height <= 0 {
+		return htClient, true
+	}
+
+	left := x < r.Left+resizeBorderPx
+	right := x >= r.Right-resizeBorderPx
+	top := y < r.Top+resizeBorderPx
+	bottom := y >= r.Bottom-resizeBorderPx
+
+	switch {
+	case top && left:
+		return htTopLeft, true
+	case top && right:
+		return htTopRight, true
+	case bottom && left:
+		return htBottomLeft, true
+	case bottom && right:
+		return htBottomRight, true
+	case left:
+		return htLeft, true
+	case right:
+		return htRight, true
+	case bottom:
+		return htBottom, true
+	}
+
+	if y < r.Top+dragCaptionPx {
+		return htCaption, true
+	}
+	return htClient, true
 }
 
 func (h *WebViewUIHost) dispatch(action func(wv webview2.WebView, hwnd uintptr)) error {
@@ -182,6 +351,7 @@ func (h *WebViewUIHost) dispatch(action func(wv webview2.WebView, hwnd uintptr))
 
 func (h *WebViewUIHost) Show() error {
 	return h.dispatch(func(wv webview2.WebView, hwnd uintptr) {
+		h.installWindowSubclasses(hwnd)
 		_, _, _ = procShowWindowUIHost.Call(hwnd, swRestore)
 		_, _, _ = procShowWindowUIHost.Call(hwnd, swShow)
 		_, _, _ = procSetForegroundWindow.Call(hwnd)

@@ -65,6 +65,12 @@ type SequenceStopResponse struct {
 	RecordedHKL uint64 `json:"recordedHkl"`
 }
 
+type QueueStateResponse struct {
+	Enabled bool   `json:"enabled"`
+	Count   int    `json:"count"`
+	Order   string `json:"order"`
+}
+
 type Server struct {
 	httpServer     *http.Server
 	config         *config.SafeConfig
@@ -92,6 +98,9 @@ func NewServer(cfg *config.SafeConfig, host interface{}, controller *app.Control
 	mux.HandleFunc("/api/config", s.handleConfig)
 	mux.HandleFunc("/api/hotkeys/capture", s.handleCaptureHotkey)
 	mux.HandleFunc("/api/history", s.handleHistory)
+	mux.HandleFunc("/api/queue/state", s.handleQueueState)
+	mux.HandleFunc("/api/queue/toggle", s.handleQueueToggle)
+	mux.HandleFunc("/api/queue/order/toggle", s.handleQueueOrderToggle)
 	mux.HandleFunc("/api/queue/clear", s.handleQueueClear)
 	mux.HandleFunc("/api/copy", s.handleCopy)
 	mux.HandleFunc("/api/sequence/start", s.handleSequenceStart)
@@ -310,6 +319,56 @@ func (s *Server) handleQueueClear(w http.ResponseWriter, r *http.Request) {
 	s.controller.ClearQueue()
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"message": "queue cleared"})
+}
+
+func (s *Server) handleQueueState(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
+		return
+	}
+
+	enabled, count, order := s.controller.GetQueueState()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(QueueStateResponse{
+		Enabled: enabled,
+		Count:   count,
+		Order:   order,
+	})
+}
+
+func (s *Server) handleQueueToggle(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
+		return
+	}
+
+	s.controller.ToggleQueue()
+	enabled, count, order := s.controller.GetQueueState()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(QueueStateResponse{
+		Enabled: enabled,
+		Count:   count,
+		Order:   order,
+	})
+}
+
+func (s *Server) handleQueueOrderToggle(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
+		return
+	}
+
+	s.controller.ToggleOrder()
+	enabled, count, order := s.controller.GetQueueState()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(QueueStateResponse{
+		Enabled: enabled,
+		Count:   count,
+		Order:   order,
+	})
 }
 
 func (s *Server) handleCopy(w http.ResponseWriter, r *http.Request) {

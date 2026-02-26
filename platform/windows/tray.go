@@ -31,6 +31,7 @@ const (
 	ID_TRAY_SWITCH_ORDER = 103
 	ID_TRAY_CLEAR        = 104
 	ID_TRAY_SETTINGS     = 106
+	ID_TRAY_TOGGLE_UI    = ID_TRAY_SETTINGS
 	ID_TRAY_EXIT         = 105
 
 	// Размеры для NOTIFYICONDATA (для Windows Vista и выше)
@@ -233,6 +234,8 @@ func (t *Tray) SetIcon(iconPath string) error {
 
 // ShowMenu показывает контекстное меню и возвращает ID выбранного пункта
 func (t *Tray) ShowMenu() uint32 {
+	return t.showSimpleMenu()
+
 	user32 := windows.NewLazySystemDLL("user32.dll")
 
 	// Создаём контекстное меню
@@ -305,6 +308,64 @@ func (t *Tray) ShowMenu() uint32 {
 	procSetForegroundWindow.Call(t.hwnd)
 
 	// Показываем контекстное меню
+	const TPM_LEFTALIGN = 0x0000
+	const TPM_TOPALIGN = 0x0000
+	procTrackPopupMenu := user32.NewProc("TrackPopupMenu")
+	selectedID, _, _ := procTrackPopupMenu.Call(
+		hMenu,
+		uintptr(TPM_RETURNCMD|TPM_LEFTALIGN|TPM_TOPALIGN),
+		uintptr(point.X),
+		uintptr(point.Y),
+		0,
+		t.hwnd,
+		0,
+	)
+
+	return uint32(selectedID)
+}
+
+func (t *Tray) showSimpleMenu() uint32 {
+	user32 := windows.NewLazySystemDLL("user32.dll")
+
+	procCreatePopupMenu := user32.NewProc("CreatePopupMenu")
+	hMenu, _, _ := procCreatePopupMenu.Call()
+	if hMenu == 0 {
+		return 0
+	}
+	defer func() {
+		procDestroyMenu := user32.NewProc("DestroyMenu")
+		procDestroyMenu.Call(hMenu)
+	}()
+
+	const MF_STRING = 0x00000000
+	const MF_ENABLED = 0x00000000
+	procAppendMenu := user32.NewProc("AppendMenuW")
+	_, _, _ = procAppendMenu.Call(
+		hMenu,
+		uintptr(MF_STRING|MF_ENABLED),
+		uintptr(ID_TRAY_TOGGLE_UI),
+		uintptr(unsafe.Pointer(windows.StringToUTF16Ptr("Открыть/спрятать UI"))),
+	)
+	_, _, _ = procAppendMenu.Call(
+		hMenu,
+		uintptr(MF_STRING|MF_ENABLED),
+		uintptr(ID_TRAY_EXIT),
+		uintptr(unsafe.Pointer(windows.StringToUTF16Ptr("Выход"))),
+	)
+
+	var point struct {
+		X int32
+		Y int32
+	}
+	procGetCursorPos := user32.NewProc("GetCursorPos")
+	ret, _, _ := procGetCursorPos.Call(uintptr(unsafe.Pointer(&point)))
+	if ret == 0 {
+		return 0
+	}
+
+	procSetForegroundWindow := user32.NewProc("SetForegroundWindow")
+	procSetForegroundWindow.Call(t.hwnd)
+
 	const TPM_LEFTALIGN = 0x0000
 	const TPM_TOPALIGN = 0x0000
 	procTrackPopupMenu := user32.NewProc("TrackPopupMenu")

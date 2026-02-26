@@ -531,6 +531,132 @@
             margin-top: 12px;
         }
 
+        .queue-toolbar {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+
+        .queue-toolbar .btn {
+            width: 100%;
+            padding: 8px 10px;
+            font-size: 12px;
+        }
+
+        .queue-state {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            margin-bottom: 10px;
+            font-size: 12px;
+            color: #bbb;
+        }
+
+        .queue-state-pill {
+            display: inline-flex;
+            align-items: center;
+            padding: 4px 8px;
+            border-radius: 999px;
+            background: #3d3d3d;
+            border: 1px solid #555;
+            color: #ddd;
+        }
+
+        .queue-state-pill.on {
+            color: #d1fae5;
+            border-color: #166534;
+            background: rgba(22, 163, 74, 0.15);
+        }
+
+        .queue-mini-note {
+            font-size: 11px;
+            color: #888;
+            margin-bottom: 8px;
+        }
+
+        .compact-layout body {
+            padding: 0;
+        }
+
+        body {
+            padding: 8px;
+            min-height: auto;
+        }
+
+        .container {
+            max-width: none;
+            width: 100%;
+            min-height: calc(100vh - 16px);
+            display: flex;
+            flex-direction: column;
+            border-radius: 10px;
+        }
+
+        .header {
+            padding: 10px 12px;
+        }
+
+        .header h1 {
+            font-size: 14px;
+        }
+
+        .content {
+            padding: 8px;
+            overflow: auto;
+            flex: 1;
+        }
+
+        .tabs {
+            margin-bottom: 10px;
+        }
+
+        .tab-button {
+            padding: 8px 10px;
+            font-size: 12px;
+        }
+
+        .section {
+            margin-bottom: 14px;
+        }
+
+        .section-title {
+            font-size: 14px;
+            margin-bottom: 10px;
+            padding-bottom: 4px;
+        }
+
+        .form-group {
+            margin-bottom: 10px;
+        }
+
+        .form-group label {
+            font-size: 12px;
+            margin-bottom: 4px;
+        }
+
+        .form-control {
+            padding: 7px 10px;
+            font-size: 12px;
+            border-radius: 6px;
+        }
+
+        td, th {
+            padding: 8px 10px;
+            font-size: 12px;
+        }
+
+        .table-container {
+            margin-top: 0;
+        }
+
+        #historyTable th:nth-child(2),
+        #historyTable td:nth-child(2),
+        #historyTable th:nth-child(4),
+        #historyTable td:nth-child(4) {
+            display: none;
+        }
+
         @media (max-width: 640px) {
             body {
                 padding: 10px;
@@ -574,12 +700,12 @@
 
         <div class="content">
             <div class="tabs">
-                <button class="tab-button active" onclick="switchTab('settings')">Настройки</button>
-                <button class="tab-button" onclick="switchTab('queue')">Очередь</button>
+                <button class="tab-button active" onclick="switchTab('queue')">Главная</button>
+                <button class="tab-button" onclick="switchTab('settings')">Настройки</button>
                 <button class="tab-button" onclick="switchTab('lab')">Лаборатория</button>
             </div>
 
-            <div id="tab-settings" class="tab-content active">
+            <div id="tab-settings" class="tab-content">
                 <div class="section">
                 <h2 class="section-title">Основные Настройки</h2>
 
@@ -666,7 +792,7 @@
                                 <th>Имя</th>
                                 <th>Горячая Клавиша</th>
                                 <th>Текст</th>
-                                <th>Режим Ввода</th>
+                                <th>Режим ввода</th>
                                 <th style="width: 150px;">Действия</th>
                             </tr>
                         </thead>
@@ -683,14 +809,24 @@
                 </div>
             </div>
 
-            <div id="tab-queue" class="tab-content">
+            <div id="tab-queue" class="tab-content active">
                 <div class="section">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
                         <h2 class="section-title" id="historyTitle">История буфера</h2>
-                        <button class="btn btn-danger" onclick="clearQueue()">
-                            Очистить очередь
-                        </button>
                     </div>
+
+                    <div class="queue-state">
+                        <span id="queueEnabledPill" class="queue-state-pill">Очередь: --</span>
+                        <span id="queueOrderPill" class="queue-state-pill">Порядок: --</span>
+                        <span id="queueCountLabel">0</span>
+                    </div>
+                    <div class="queue-toolbar">
+                        <button id="btnToggleQueueMain" class="btn btn-secondary" onclick="toggleQueueEnabled()">Вкл/выкл очередь</button>
+                        <button id="btnToggleOrderMain" class="btn btn-secondary" onclick="toggleQueueOrder()">Сменить FIFO/LIFO</button>
+                        <button class="btn btn-danger" onclick="clearQueue()">Очистить очередь</button>
+                        <button class="btn btn-primary" onclick="switchTab('settings')">Настройки</button>
+                    </div>
+                    <div class="queue-mini-note">Клик по строке истории копирует элемент в буфер обмена</div>
 
                     <div class="table-container">
                         <table id="historyTable">
@@ -761,7 +897,7 @@
                     <textarea id="macroText" class="form-control" placeholder="Введите текст для макроса"></textarea>
                 </div>
                 <div class="form-group">
-                    <label for="macroMode">Режим Ввода</label>
+                    <label for="macroMode">Режим ввода</label>
                     <select id="macroMode" class="form-control">
                         <option value="type">Type</option>
                         <option value="paste">Paste</option>
@@ -804,12 +940,15 @@
         let sequenceRecording = false;
         let sequencePollingTimer = null;
         let sequenceLastPreview = [];
+        let queueUIState = null;
 
         // Load config on page load
         document.addEventListener('DOMContentLoaded', () => {
             loadConfig();
             setupHotkeyInputs();
             document.getElementById('macroMode').addEventListener('change', updateMacroModeUI);
+            loadHistory();
+            startHistoryRefresh();
         });
 
         // Load config from API
@@ -829,6 +968,7 @@
                     };
                 }
                 populateForm();
+                refreshQueueState();
             } catch (error) {
                 showStatus('Ошибка загрузки настроек: ' + error.message, 'error');
             }
@@ -935,7 +1075,7 @@
             const originalPlaceholder = input.placeholder;
             
             // Set recording state
-            input.value = 'Кнопка для бинда ->';
+            input.value = 'Запись ->';
             input.classList.add('recording');
             
             try {
@@ -1182,7 +1322,7 @@
                     document.getElementById('macroMode').value = macro.mode || 'type';
                     document.getElementById('macroSequence').value = macro.sequence || '';
                     document.getElementById('sequenceNormalizeDelays').checked = !!macro.sequenceNormalizeDelays;
-                    document.getElementById('sequenceDelayMs').value = (macro.sequenceDelayMs ?? 15);
+                    document.getElementById('sequenceDelayMs').value = (macro.sequenceDelayMs ? 15);
                 }
             } else {
                 title.textContent = 'Добавить Макрос';
@@ -1396,6 +1536,7 @@
                 const history = await response.json();
                 renderHistoryTable(history);
                 updateHistoryTitle();
+                refreshQueueState();
             } catch (error) {
                 console.error('Ошибка загрузки истории:', error);
                 showStatus('Ошибка загрузки истории: ' + error.message, 'error');
@@ -1476,6 +1617,65 @@
             }
         }
 
+        async function refreshQueueState() {
+            try {
+                queueUIState = await window.ClipQueueAPI.getQueueState();
+                applyQueueStateUI();
+                if (queueUIState && queueUIState.order && document.getElementById('historyTitle')) {
+                    const title = document.getElementById('historyTitle');
+                    title.textContent = `История буфера (${queueUIState.order})`;
+                }
+            } catch (error) {
+                console.error('Queue state error:', error);
+            }
+        }
+
+        function applyQueueStateUI() {
+            const state = queueUIState || { enabled: false, order: 'LIFO', count: 0 };
+            const enabledPill = document.getElementById('queueEnabledPill');
+            const orderPill = document.getElementById('queueOrderPill');
+            const countLabel = document.getElementById('queueCountLabel');
+            const toggleBtn = document.getElementById('btnToggleQueueMain');
+            const orderBtn = document.getElementById('btnToggleOrderMain');
+
+            if (enabledPill) {
+                enabledPill.textContent = state.enabled ? 'Очередь: ВКЛ' : 'Очередь: ВЫКЛ';
+                enabledPill.classList.toggle('on', !!state.enabled);
+            }
+            if (orderPill) {
+                orderPill.textContent = 'Порядок: ' + (state.order || 'LIFO');
+            }
+            if (countLabel) {
+                countLabel.textContent = 'Элементов: ' + (state.count || 0);
+            }
+            if (toggleBtn) {
+                toggleBtn.textContent = state.enabled ? 'Выключить очередь' : 'Включить очередь';
+            }
+            if (orderBtn) {
+                orderBtn.textContent = 'Порядок: ' + (state.order || 'LIFO');
+            }
+        }
+
+        async function toggleQueueEnabled() {
+            try {
+                queueUIState = await window.ClipQueueAPI.toggleQueue();
+                applyQueueStateUI();
+                loadHistory();
+            } catch (error) {
+                showStatus('Ошибка переключения очереди: ' + error.message, 'error');
+            }
+        }
+
+        async function toggleQueueOrder() {
+            try {
+                queueUIState = await window.ClipQueueAPI.toggleQueueOrder();
+                applyQueueStateUI();
+                loadHistory();
+            } catch (error) {
+                showStatus('Ошибка переключения порядка: ' + error.message, 'error');
+            }
+        }
+
         // Copy item by ID
         async function copyItem(id) {
             try {
@@ -1504,7 +1704,8 @@
                     throw new Error('Не удалось очистить очередь');
                 }
 
-                loadQueue();
+                refreshQueueState();
+                loadHistory();
                 showStatus('Очередь очищена', 'success');
             } catch (error) {
                 showStatus('Ошибка при очистке очереди: ' + error.message, 'error');
@@ -1593,7 +1794,7 @@
                 if (index > 0) {
                     const connector = document.createElement('div');
                     connector.className = 'pipeline-connector';
-                    connector.textContent = '→';
+                    connector.textContent = 'в†'';
                     container.appendChild(connector);
                 }
 
@@ -1728,6 +1929,7 @@
     </script>
 </body>
 </html>
+
 
 
 

@@ -148,9 +148,9 @@ func main() {
 		case windows.ID_TRAY_CLEAR:
 			logger.Debug("Tray clear queue command selected")
 			go controller.ClearQueue()
-		case windows.ID_TRAY_SETTINGS:
-			logger.Debug("Tray settings command selected")
-			if err := uiHost.Show(); err != nil {
+		case windows.ID_TRAY_TOGGLE_UI:
+			logger.Debug("Tray toggle UI command selected")
+			if err := uiHost.Toggle(); err != nil {
 				logger.Error("Failed to show UI host: %v", err)
 			}
 		case windows.ID_TRAY_EXIT:
