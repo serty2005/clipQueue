@@ -1,121 +1,189 @@
 # ClipQueue
 
-Windows-only application for managing clipboard history with global hotkeys.
+ClipQueue - Windows-приложение для работы с буфером обмена, очередью вставки и макросами по глобальным хоткеям.
 
-## Features
+Программа подходит для прикладного использования, когда нужно:
 
-- **Queue Mode**: Press `Alt+C` to toggle queue mode
-- **Paste Next**: Press `Alt+V` to paste the next item from the queue
-- **Queue Order Toggle**: Assign an optional hotkey to switch between `LIFO` and `FIFO`
-- **Clipboard Watcher**: Automatically detects clipboard changes
+- накапливать несколько элементов буфера обмена подряд;
+- вставлять их по одному в нужном порядке;
+- быстро возвращать в буфер ранее скопированный текст, файл или изображение;
+- запускать текстовые и клавиатурные макросы одной клавишей.
 
-## Building
+## Что умеет программа
+
+- ведёт историю буфера обмена;
+- хранит до 50 последних элементов истории;
+- поддерживает текст, списки файлов и изображения;
+- умеет собирать очередь вставки из новых копирований;
+- вставляет следующий элемент очереди в режиме `LIFO` или `FIFO`;
+- после вставки восстанавливает предыдущее содержимое буфера обмена;
+- позволяет копировать любой элемент из истории обратно в текущий буфер;
+- поддерживает глобальные хоткеи;
+- позволяет создавать макросы с собственными хоткеями;
+- умеет записывать и воспроизводить последовательности клавиш;
+- содержит экспериментальный раздел `Lab` для разбора и сборки текстовых команд.
+
+## Системные требования
+
+- Windows;
+- доступ к глобальным хоткеям и буферу обмена;
+- для встроенного окна интерфейса желателен WebView2 Runtime.
+
+Если WebView2 недоступен, приложение пытается открыть интерфейс во внешнем браузере.
+
+## Установка
+
+1. Откройте страницу релизов репозитория и скачайте `clipqueue.exe`.
+2. Поместите файл в отдельную папку, где программа сможет хранить свои настройки.
+3. Запустите `clipqueue.exe`.
+
+При первом запуске рядом с `.exe` будет создан `config.yml`. Интерфейс автоматически откроется на экране настроек хоткеев.
+
+## Быстрый старт
+
+Горячие клавиши по умолчанию:
+
+- включение и выключение очереди: `Ctrl+Alt+C`
+- вставка следующего элемента очереди: `Ctrl+Alt+V`
+
+По умолчанию:
+
+- история буфера включена;
+- очередь включаемая, но изначально выключена;
+- порядок очереди `LIFO`;
+- макросы включены;
+- раздел `Lab` выключен.
+
+## Работа с приложением
+
+### Буфер
+
+Экран `Буфер` показывает историю последних элементов.
+
+- текст сохраняется с кратким предпросмотром;
+- изображения показываются как элемент типа `Image`;
+- списки файлов показываются как элемент типа `Files`;
+- текущий активный буфер помечается отдельно.
+
+Если нажать на элемент истории, он будет снова записан в буфер обмена. Это удобно, когда нужно быстро вернуть ранее скопированный фрагмент без повторного копирования из исходной программы.
+
+### Очередь
+
+Очередь нужна для поэтапной вставки нескольких элементов.
+
+Как это работает:
+
+1. Включите очередь.
+2. Скопируйте подряд нужные тексты, файлы или изображения.
+3. Каждый новый элемент попадёт в историю и в очередь.
+4. Нажимайте хоткей вставки следующего элемента.
+5. ClipQueue временно подставит следующий элемент в буфер, отправит `Ctrl+V`, затем восстановит предыдущий буфер.
+
+Важно:
+
+- в очередь попадают только элементы, скопированные после её включения;
+- если очередь выключить, уже набранные элементы не очищаются;
+- очередь можно очистить вручную;
+- порядок можно переключать между `LIFO` и `FIFO`.
+
+### Макросы
+
+В разделе `Макросы` можно создавать собственные действия по глобальному хоткею.
+
+Поддерживаются режимы:
+
+- `Type` - посимвольный ввод текста;
+- `Paste` - вставка текста через буфер обмена с последующим восстановлением исходного буфера;
+- `Hardware` - ввод текста через низкоуровневую эмуляцию клавиатуры;
+- `Sequence` - воспроизведение заранее записанной последовательности клавиш.
+
+Для макроса можно задать:
+
+- имя;
+- хоткей;
+- текст;
+- режим работы;
+- для `Sequence` - запись последовательности, нормализацию задержек и фиксированную задержку между событиями.
+
+### Настройки
+
+Встроенный экран `Конфигурация` позволяет:
+
+- назначать хоткеи для очереди, вставки, переключения порядка и открытия UI;
+- менять порядок очереди по умолчанию;
+- менять задержки наблюдения за буфером и восстановления буфера после вставки;
+- включать и выключать функции `Queue`, `Clipboard`, `Macros`, `Lab`.
+
+Рекомендуется менять хоткеи именно через интерфейс приложения. В `config.yml` они хранятся не только как отображаемый текст, но и как внутренняя сигнатура.
+
+## Файл конфигурации
+
+`config.yml` создаётся рядом с исполняемым файлом.
+
+Из прикладных параметров особенно полезны:
+
+- `app.data_dir` - каталог данных; относительный путь считается от папки с `.exe`;
+- `app.silent` - скрывает консоль;
+- `app.logs` - включает запись лога в файл;
+- `features.*` - включает или выключает крупные блоки функциональности.
+
+Если `app.logs: true`, лог пишется в:
+
+```text
+<data_dir>\logs\app.log
+```
+
+## Ограничения текущей версии
+
+- приложение работает только в Windows;
+- история хранит только последние 50 элементов;
+- поддерживаются только три типа содержимого: текст, файлы и изображения;
+- раздел `Lab` в текущей версии занимается только разбором и сборкой строк команд, но не выполняет системные команды;
+- если включён `silent`, иконка в системном трее не создаётся.
+
+## Сборка из исходников
+
+Если вы хотите собрать программу самостоятельно:
 
 ```bash
-go build -o clipqueue.exe
+go build -o clipqueue.exe -ldflags="-s -w -H windowsgui" -trimpath .
 ```
 
-## Running
+## Релизы
 
-```bash
-./clipqueue.exe
+В репозитории настроена автоматическая публикация релизов через GitHub Actions.
+
+Релиз создаётся только при `push` в `main`, если сообщение коммита начинается с `v`.
+
+Пример:
+
+```text
+v1.0.0-rev
 ```
 
-## Testing
+В этом случае:
 
-### General Testing
+- тег релиза будет `1.0.0`;
+- имя релиза будет `1.0.0`;
+- в релиз прикрепляется `clipqueue.exe`.
 
-1. Run the application:
-   ```bash
-   ./clipqueue.exe
-   ```
+## Для разработчиков
 
-2. Check the console output for "Host started" message.
+Основные части кода:
 
-3. Press `Alt+C` - you should see "QUEUE ON/OFF" in the console.
+- `main.go` - инициализация конфигурации, логгера, UI, Windows host и жизненного цикла приложения;
+- `internal/app/controller.go` - история буфера, очередь, вставка следующего элемента, копирование из истории и выполнение макросов;
+- `platform/windows` - интеграция с WinAPI: буфер обмена, глобальные хоткеи, low-level input, запись последовательностей, системный трей;
+- `internal/ui/server` - встроенный HTTP-сервер с HTML/JS интерфейсом и native bridge;
+- `internal/uihost` - выбор между встроенным окном WebView2 и fallback на внешний браузер;
+- `internal/config` - структура `config.yml`, загрузка, сохранение и миграция старого формата макросов;
+- `internal/parser` - парсер и обратная сборка строк для раздела `Lab`;
+- `.github/workflows/release.yml` - CD-процесс сборки и публикации релиза.
 
-4. Press `Alt+V` - you should see "PASTE NEXT" in the console.
-5. If a queue order hotkey is assigned, press it - you should see the queue order switch between `LIFO` and `FIFO`.
+Практические нюансы:
 
-6. Copy any text in another application - you should see detailed clipboard information in the console, including type, length, and preview.
-
-7. Copy one or more files in File Explorer - you should see the number of files and a preview of their paths in the console.
-
-7. Copy an image (e.g., from Paint or a browser) - you should see the image type and preview information in the console.
-
-8. Press `Ctrl+C` to stop the application - you should see "Host stopping" and then "ClipQueue stopped" in the console.
-
-### Testing CF_HDROP Write Functionality
-
-To test writing files to the clipboard (CF_HDROP format):
-
-1. First, you need to create a small test program or add temporary code to the main application to call the `Write()` function with file paths.
-
-2. Example temporary code you can add to `main.go`:
-   ```go
-   package main
-
-   import (
-       "github.com/serty2005/clipqueue/internal/logger"
-       "github.com/serty2005/clipqueue/platform/windows"
-   )
-
-   func main() {
-       logger.Init()
-       
-       // Test writing files to clipboard
-       filesToCopy := []string{
-           "C:\\Path\\To\\Your\\File1.txt",
-           "C:\\Path\\To\\Your\\File2.jpg",
-       }
-       
-       err := windows.Write(windows.ClipboardContent{
-           Type:  windows.Files,
-           Files: filesToCopy,
-       })
-       
-       if err != nil {
-           logger.Error("Failed to write files to clipboard: %v", err)
-       } else {
-           logger.Info("Successfully wrote %d files to clipboard", len(filesToCopy))
-       }
-       
-       // Wait for user input
-       logger.Info("Press Enter to exit...")
-       var input string
-       fmt.Scanln(&input)
-   }
-   ```
-
-3. Build and run this test program.
-
-4. After running, open File Explorer and press `Ctrl+V`. You should see the files you specified in the clipboard appear as copied files.
-
-## What We Don't Support Yet
-
-- RTF (Rich Text Format)
-- HTML format
-- BITMAPV5HEADER with advanced features (like BI_BITFIELDS)
-- Compressed DIB formats (e.g., BI_RLE8, BI_RLE4)
-- Other specialized clipboard formats
-
-## Configuration
-
-The application will create a `config.yml` file in the same directory as the executable with the following default settings:
-
-```yaml
-app:
-  data_dir: C:\Users\YourUsername\AppData\Roaming\ClipQueue
-hotkeys:
-  toggle_queue: Alt+C
-  paste_next: Alt+V
-  toggle_queue_order: ""
-clipboard:
-  watch_debounce_ms: 30
-queue:
-  default_order: LIFO
-```
-
-## Logs
-
-Logs are stored in the `data_dir/logs/app.log` file.
+- `config.yml` хранится рядом с `.exe`, а относительные пути считаются от каталога исполняемого файла;
+- очередь не очищается при выключении, только перестаёт принимать новые элементы;
+- история ограничена 50 записями;
+- параметр `clipboard.paste_delay_ms` есть в конфигурации и UI, но в текущем Go-коде не используется при вставке;
+- UI в обычном режиме работает через native bridge, а при fallback в браузер опирается на HTTP API и периодический опрос состояния.
