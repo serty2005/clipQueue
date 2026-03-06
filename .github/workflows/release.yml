@@ -1,0 +1,88 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  detect-release:
+    name: Определить параметры релиза
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.extract.outputs.should_release }}
+      version: ${{ steps.extract.outputs.version }}
+    steps:
+      - name: Извлечь версию из сообщения коммита
+        id: extract
+        env:
+          HEAD_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          python <<'PY'
+          import os
+          import re
+          import sys
+
+          message = os.environ.get("HEAD_COMMIT_MESSAGE", "").strip()
+          output_path = os.environ["GITHUB_OUTPUT"]
+
+          def write_output(name: str, value: str) -> None:
+              with open(output_path, "a", encoding="utf-8") as file:
+                  print(f"{name}={value}", file=file)
+
+          if not message.startswith("v"):
+              write_output("should_release", "false")
+              write_output("version", "")
+              sys.exit(0)
+
+          match = re.match(r"^v(?P<version>\d+(?:\.\d+)+)", message)
+          if match is None:
+              raise SystemExit("Сообщение коммита начинается с 'v', но не содержит версию в формате X.Y.Z.")
+
+          version = match.group("version")
+          write_output("should_release", "true")
+          write_output("version", version)
+          PY
+
+  release:
+    name: Собрать и опубликовать релиз
+    needs: detect-release
+    if: needs.detect-release.outputs.should_release == 'true'
+    runs-on: windows-latest
+    steps:
+      - name: Получить код
+        uses: actions/checkout@v4
+
+      - name: Настроить Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Собрать clipqueue.exe
+        shell: pwsh
+        run: |
+          go build -o clipqueue.exe '-ldflags=-s -w -H windowsgui' -trimpath .
+
+      - name: Проверить отсутствие релиза с таким тегом
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.detect-release.outputs.version }}
+        run: |
+          gh release view $env:RELEASE_VERSION *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Error "Релиз с тегом $env:RELEASE_VERSION уже существует."
+          }
+
+      - name: Опубликовать релиз
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.detect-release.outputs.version }}
+          RELEASE_NOTES: ${{ github.event.head_commit.message }}
+        run: |
+          gh release create $env:RELEASE_VERSION .\clipqueue.exe --target $env:GITHUB_SHA --title $env:RELEASE_VERSION --notes $env:RELEASE_NOTES

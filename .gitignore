@@ -2,4 +2,4 @@
 .kilocode
 *.py
 logs
-*.yml
+config.yml
