@@ -2,9 +2,9 @@
 
 package uihost
 
-func NewPreferredUIHost(url string) UIHost {
+func NewPreferredUIHost(url string, initialState WindowState) UIHost {
 	return NewFallbackUIHost(
-		NewWebViewUIHost(url),
+		NewWebViewUIHost(url, initialState),
 		NewBrowserUIHost(url),
 	)
 }

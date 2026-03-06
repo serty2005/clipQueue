@@ -33,7 +33,9 @@ const (
 
 	gwlpWndProc = -4
 
-	wmNCHitTest = 0x0084
+	wmClose        = 0x0010
+	wmNCHitTest    = 0x0084
+	wmExitSizeMove = 0x0232
 
 	htClient      = 1
 	htCaption     = 2
@@ -67,19 +69,22 @@ var (
 )
 
 type WebViewUIHost struct {
-	mu        sync.RWMutex
-	title     string
-	url       string
-	width     int
-	height    int
-	readyOnce sync.Once
-	readyDone chan struct{}
-	readyErr  error
+	mu                 sync.RWMutex
+	title              string
+	url                string
+	width              int
+	height             int
+	initialState       WindowState
+	windowStateHandler func(WindowState)
+	readyOnce          sync.Once
+	readyDone          chan struct{}
+	readyErr           error
 
 	wv         webview2.WebView
 	hwnd       uintptr
 	subclassed map[uintptr]uintptr // hwnd -> previous wndproc
 	visible    bool
+	destroying bool
 	closed     bool
 	started    bool
 
@@ -93,20 +98,35 @@ type rect struct {
 	Bottom int32
 }
 
-func NewWebViewUIHost(url string) *WebViewUIHost {
+func NewWebViewUIHost(url string, initialState WindowState) *WebViewUIHost {
+	width := initialState.Width
+	height := initialState.Height
+	if width <= 0 {
+		width = 500
+	}
+	if height <= 0 {
+		height = 250
+	}
 	return &WebViewUIHost{
-		title:      "ClipQueue",
-		url:        url,
-		width:      500,
-		height:     250,
-		readyDone:  make(chan struct{}),
-		subclassed: make(map[uintptr]uintptr),
+		title:        "ClipQueue",
+		url:          url,
+		width:        width,
+		height:       height,
+		initialState: initialState,
+		readyDone:    make(chan struct{}),
+		subclassed:   make(map[uintptr]uintptr),
 	}
 }
 
 func (h *WebViewUIHost) SetNativeBridge(bridge *NativeBridge) {
 	h.mu.Lock()
 	h.bridge = bridge
+	h.mu.Unlock()
+}
+
+func (h *WebViewUIHost) SetWindowStateHandler(handler func(WindowState)) {
+	h.mu.Lock()
+	h.windowStateHandler = handler
 	h.mu.Unlock()
 }
 
@@ -133,6 +153,7 @@ func (h *WebViewUIHost) runUIThread() {
 	width := h.width
 	height := h.height
 	url := h.url
+	initialState := h.initialState
 	h.mu.RUnlock()
 
 	wv := webview2.NewWithOptions(webview2.WebViewOptions{
@@ -142,7 +163,7 @@ func (h *WebViewUIHost) runUIThread() {
 			Title:  title,
 			Width:  uint(width),
 			Height: uint(height),
-			Center: true,
+			Center: !initialState.HasBounds,
 		},
 	})
 	if wv == nil {
@@ -165,6 +186,7 @@ func (h *WebViewUIHost) runUIThread() {
 	}
 
 	h.applyFramelessStyle(hwnd)
+	h.applyStoredBounds(hwnd, initialState)
 	h.bindNativeBridge(wv)
 	h.installWindowSubclasses(hwnd)
 	_, _, _ = procShowWindowUIHost.Call(hwnd, swHide)
@@ -189,12 +211,28 @@ func (h *WebViewUIHost) runUIThread() {
 	h.hwnd = 0
 	h.subclassed = map[uintptr]uintptr{}
 	h.visible = false
+	h.destroying = false
 	h.closed = true
 	h.mu.Unlock()
 
 	h.unregisterSubclasses()
 
 	logger.Info("WebView UI host stopped")
+}
+
+func (h *WebViewUIHost) applyStoredBounds(hwnd uintptr, state WindowState) {
+	if !state.HasBounds || state.Width <= 0 || state.Height <= 0 {
+		return
+	}
+	procSetWindowPos.Call(
+		hwnd,
+		0,
+		uintptr(state.X),
+		uintptr(state.Y),
+		uintptr(state.Width),
+		uintptr(state.Height),
+		swpNoZOrder|swpNoActivate,
+	)
 }
 
 func (h *WebViewUIHost) applyFramelessStyle(hwnd uintptr) {
@@ -208,6 +246,50 @@ func (h *WebViewUIHost) applyFramelessStyle(hwnd uintptr) {
 		0, 0, 0, 0,
 		swpNoMove|swpNoSize|swpNoZOrder|swpNoActivate|swpFrameChanged,
 	)
+}
+
+func (h *WebViewUIHost) readWindowState(hwnd uintptr, visible bool) WindowState {
+	state := WindowState{
+		Visible: visible,
+	}
+
+	var r rect
+	if ok, _, _ := procGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&r))); ok != 0 {
+		state.X = int(r.Left)
+		state.Y = int(r.Top)
+		state.Width = int(r.Right - r.Left)
+		state.Height = int(r.Bottom - r.Top)
+		state.HasBounds = state.Width > 0 && state.Height > 0
+	}
+
+	if !state.HasBounds {
+		h.mu.RLock()
+		state.HasBounds = h.initialState.HasBounds
+		state.X = h.initialState.X
+		state.Y = h.initialState.Y
+		state.Width = h.width
+		state.Height = h.height
+		h.mu.RUnlock()
+	}
+
+	return state
+}
+
+func (h *WebViewUIHost) notifyWindowState(state WindowState) {
+	h.mu.Lock()
+	h.initialState = state
+	if state.Width > 0 {
+		h.width = state.Width
+	}
+	if state.Height > 0 {
+		h.height = state.Height
+	}
+	handler := h.windowStateHandler
+	h.mu.Unlock()
+
+	if handler != nil {
+		handler(state)
+	}
 }
 
 func ensureWebViewHostWndProc() uintptr {
@@ -281,7 +363,23 @@ func webViewHostWndProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintpt
 	h.mu.RLock()
 	prev := h.subclassed[hwnd]
 	rootHWND := h.hwnd
+	destroying := h.destroying
+	visible := h.visible
 	h.mu.RUnlock()
+	if msg == wmClose && hwnd == rootHWND && rootHWND != 0 && !destroying {
+		_, _, _ = procShowWindowUIHost.Call(rootHWND, swHide)
+		h.mu.Lock()
+		h.visible = false
+		h.mu.Unlock()
+		h.notifyWindowState(h.readWindowState(rootHWND, false))
+		return 0
+	}
+	if msg == wmExitSizeMove && hwnd == rootHWND && rootHWND != 0 {
+		if r, _, _ := procIsWindowVisible.Call(rootHWND); r == 0 {
+			visible = false
+		}
+		h.notifyWindowState(h.readWindowState(rootHWND, visible))
+	}
 	if msg == wmNCHitTest && rootHWND != 0 {
 		if hit, ok := h.hitTest(rootHWND, lParam); ok {
 			return hit
@@ -535,6 +633,7 @@ func (h *WebViewUIHost) Show() error {
 		h.mu.Lock()
 		h.visible = true
 		h.mu.Unlock()
+		h.notifyWindowState(h.readWindowState(hwnd, true))
 	})
 }
 
@@ -544,6 +643,7 @@ func (h *WebViewUIHost) Hide() error {
 		h.mu.Lock()
 		h.visible = false
 		h.mu.Unlock()
+		h.notifyWindowState(h.readWindowState(hwnd, false))
 	})
 }
 
@@ -571,11 +671,14 @@ func (h *WebViewUIHost) Toggle() error {
 
 func (h *WebViewUIHost) Focus() error {
 	return h.dispatch(func(wv webview2.WebView, hwnd uintptr) {
+		_, _, _ = procShowWindowUIHost.Call(hwnd, swRestore)
+		_, _, _ = procShowWindowUIHost.Call(hwnd, swShow)
 		_, _, _ = procSetForegroundWindow.Call(hwnd)
 		_, _, _ = procSetFocusUIHost.Call(hwnd)
 		h.mu.Lock()
 		h.visible = true
 		h.mu.Unlock()
+		h.notifyWindowState(h.readWindowState(hwnd, true))
 	})
 }
 
@@ -593,6 +696,11 @@ func (h *WebViewUIHost) Close() error {
 	}
 
 	return h.dispatch(func(wv webview2.WebView, hwnd uintptr) {
+		h.mu.Lock()
+		h.destroying = true
+		visible := h.visible
+		h.mu.Unlock()
+		h.notifyWindowState(h.readWindowState(hwnd, visible))
 		wv.Destroy()
 	})
 }

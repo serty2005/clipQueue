@@ -68,6 +68,7 @@ type Host struct {
 	hwnd               uintptr
 	className          *uint16
 	running            bool
+	onToggleUI         func()
 	onToggleQueue      func()
 	onToggleQueueOrder func()
 	onPasteNext        func()
@@ -85,6 +86,7 @@ func NewHost(cfg *config.SafeConfig, controller MacroExecutor) (*Host, error) {
 	host := &Host{
 		cfg:                cfg,
 		controller:         controller,
+		onToggleUI:         func() {},
 		onToggleQueue:      func() {},
 		onToggleQueueOrder: func() {},
 		onPasteNext:        func() {},
@@ -114,6 +116,10 @@ func (h *Host) OnHotkeyToggleQueue(callback func()) {
 	h.onToggleQueue = callback
 }
 
+func (h *Host) OnHotkeyToggleUI(callback func()) {
+	h.onToggleUI = callback
+}
+
 func (h *Host) OnHotkeyToggleQueueOrder(callback func()) {
 	h.onToggleQueueOrder = callback
 }
@@ -135,6 +141,20 @@ func (h *Host) OnTrayCommand(callback func(id uint32)) {
 func (h *Host) registerConfiguredHotkeys() {
 	cfg := h.cfg.Get()
 	matcher := h.inputListener.GetMatcher()
+
+	// ToggleUI
+	if cfg.Hotkeys.ToggleUI != "" {
+		hotkeyStr := cfg.Hotkeys.ToggleUI
+		sig := h.parseHotkeyToSignature(hotkeyStr)
+		if sig != nil {
+			matcher.Register(*sig, "toggle_ui", func() {
+				h.onToggleUI()
+			})
+			logger.Info("Успешная регистрация хоткея ToggleUI: %s", hotkeyStr)
+		} else {
+			logger.Error("Не удалось зарегистрировать хоткей ToggleUI: %s", cfg.Hotkeys.ToggleUI)
+		}
+	}
 
 	// ToggleQueue
 	if cfg.Features.EnableQueue {

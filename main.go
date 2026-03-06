@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"os/signal"
 	"syscall"
@@ -18,6 +19,9 @@ import (
 )
 
 func main() {
+	_, statErr := os.Stat(config.ConfigPath())
+	firstRun := os.IsNotExist(statErr)
+
 	// Load config first
 	cfg, err := config.Load()
 	if err != nil {
@@ -34,7 +38,7 @@ func main() {
 	windows.EnableHighDPIAwareness()
 
 	// Initialize logger with silent parameter
-	if err := logger.Init(cfg.App.Silent); err != nil {
+	if err := logger.Init(cfg); err != nil {
 		fmt.Printf("Failed to initialize logger: %v\n", err)
 		return
 	}
@@ -66,7 +70,39 @@ func main() {
 		logger.Error("Failed to start UI server: %v", err)
 		return
 	}
-	uiHost := uihost.NewPreferredUIHost(uiServer.GetURL())
+	uiURL := uiServer.GetURL()
+	if firstRun {
+		parsedURL, err := url.Parse(uiURL)
+		if err == nil {
+			query := parsedURL.Query()
+			query.Set("screen", "set")
+			query.Set("pane", "hotkeys")
+			parsedURL.RawQuery = query.Encode()
+			uiURL = parsedURL.String()
+		}
+	}
+	uiHost := uihost.NewPreferredUIHost(uiURL, uihost.WindowState{
+		Visible:   cfg.UI.Visible,
+		HasBounds: cfg.UI.HasBounds,
+		X:         cfg.UI.X,
+		Y:         cfg.UI.Y,
+		Width:     cfg.UI.Width,
+		Height:    cfg.UI.Height,
+	})
+	if stateAware, ok := uiHost.(uihost.WindowStateAware); ok {
+		stateAware.SetWindowStateHandler(func(state uihost.WindowState) {
+			if err := safeCfg.Mutate(func(cfg *config.Config) {
+				cfg.UI.Visible = state.Visible
+				cfg.UI.HasBounds = state.HasBounds
+				cfg.UI.X = state.X
+				cfg.UI.Y = state.Y
+				cfg.UI.Width = state.Width
+				cfg.UI.Height = state.Height
+			}); err != nil {
+				logger.Warn("Failed to persist UI state: %v", err)
+			}
+		})
+	}
 	if nativeUI, ok := uiHost.(uihost.NativeBridgeCapable); ok {
 		nativeUI.SetNativeBridge(&uihost.NativeBridge{
 			GetUISnapshot: func() (interface{}, error) {
@@ -173,6 +209,15 @@ func main() {
 		go controller.ToggleQueue()
 	})
 
+	host.OnHotkeyToggleUI(func() {
+		logger.Debug("ToggleUI hotkey pressed")
+		go func() {
+			if err := uiHost.Toggle(); err != nil {
+				logger.Error("Failed to toggle UI host: %v", err)
+			}
+		}()
+	})
+
 	host.OnHotkeyToggleQueueOrder(func() {
 		logger.Debug("ToggleQueueOrder hotkey pressed")
 		go controller.ToggleOrder()
@@ -253,6 +298,12 @@ func main() {
 		return
 	}
 	logger.Info("Host started")
+
+	if firstRun || cfg.UI.Visible {
+		if err := uiHost.Show(); err != nil {
+			logger.Warn("Failed to show UI host on startup: %v", err)
+		}
+	}
 
 	<-sigChan
 

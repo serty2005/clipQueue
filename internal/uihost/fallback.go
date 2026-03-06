@@ -108,6 +108,15 @@ func (h *FallbackUIHost) SetNativeBridge(bridge *NativeBridge) {
 	}
 }
 
+func (h *FallbackUIHost) SetWindowStateHandler(handler func(WindowState)) {
+	if aware, ok := h.primary.(WindowStateAware); ok {
+		aware.SetWindowStateHandler(handler)
+	}
+	if aware, ok := h.fallback.(WindowStateAware); ok {
+		aware.SetWindowStateHandler(handler)
+	}
+}
+
 func (h *FallbackUIHost) NotifyNativeStateChanged() {
 	if cap, ok := h.active().(NativeBridgeCapable); ok {
 		cap.NotifyNativeStateChanged()

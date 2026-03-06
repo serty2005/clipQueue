@@ -17,33 +17,31 @@ var (
 	initOnce      sync.Once
 )
 
-func Init(silent bool) error {
+func Init(cfg *config.Config) error {
 	var err error
 
 	initOnce.Do(func() {
-		// Load config to get data directory
-		cfg, loadErr := config.Load()
-		if loadErr != nil {
-			err = loadErr
+		if cfg == nil {
+			err = os.ErrInvalid
 			return
 		}
 
-		// Create logs directory
-		logDir := filepath.Join(cfg.App.DataDir, "logs")
-		if err = os.MkdirAll(logDir, 0755); err != nil {
-			return
+		if cfg.App.Logs {
+			logDir := filepath.Join(config.ResolvePath(cfg.App.DataDir), "logs")
+			if err = os.MkdirAll(logDir, 0755); err != nil {
+				return
+			}
+
+			logPath := filepath.Join(logDir, "app.log")
+			logFile, err = os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+			if err != nil {
+				return
+			}
+
+			fileLogger = log.New(logFile, "", log.LstdFlags)
 		}
 
-		// Open log file
-		logPath := filepath.Join(logDir, "app.log")
-		logFile, err = os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-		if err != nil {
-			return
-		}
-
-		// Initialize loggers
-		fileLogger = log.New(logFile, "", log.LstdFlags)
-		if silent {
+		if cfg.App.Silent {
 			consoleLogger = log.New(io.Discard, "", log.LstdFlags)
 		} else {
 			consoleLogger = log.New(os.Stdout, "", log.LstdFlags)

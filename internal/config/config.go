@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"hash/fnv"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -30,6 +32,8 @@ var keyMap = map[string]uint32{
 	"AUDIOVOLUMEMUTE": 0xAD, "AUDIOVOLUMEDOWN": 0xAE, "AUDIOVOLUMEUP": 0xAF,
 	"GRAVE": 0xC0, "TILDE": 0xC0,
 }
+
+var yamlQuotedYKeyPattern = regexp.MustCompile(`(?m)^(\s*)"y":`)
 
 const (
 	MOD_ALT                        = 0x0001
@@ -163,6 +167,7 @@ type oldConfig struct {
 	App struct {
 		DataDir string `yaml:"data_dir" json:"dataDir"`
 		Silent  bool   `yaml:"silent" json:"silent"`
+		Logs    bool   `yaml:"logs" json:"logs"`
 	} `yaml:"app"`
 	Hotkeys struct {
 		ToggleQueue      string `yaml:"toggle_queue" json:"toggleQueue"`
@@ -180,18 +185,30 @@ type oldConfig struct {
 	Macros map[string]Macro `yaml:"macros"`
 }
 
+type UIConfig struct {
+	Visible   bool `yaml:"visible" json:"visible"`
+	HasBounds bool `yaml:"has_bounds" json:"hasBounds"`
+	X         int  `yaml:"x" json:"x"`
+	Y         int  `yaml:"y" json:"y"`
+	Width     int  `yaml:"width" json:"width"`
+	Height    int  `yaml:"height" json:"height"`
+}
+
 type Config struct {
 	App struct {
 		DataDir string `yaml:"data_dir" json:"dataDir"`
 		Silent  bool   `yaml:"silent" json:"silent"`
+		Logs    bool   `yaml:"logs" json:"logs"`
 	} `yaml:"app" json:"app"`
 	Hotkeys struct {
 		ToggleQueue             string `yaml:"toggle_queue" json:"toggleQueue"`
 		PasteNext               string `yaml:"paste_next" json:"pasteNext"`
 		ToggleQueueOrder        string `yaml:"toggle_queue_order" json:"toggleQueueOrder"`
+		ToggleUI                string `yaml:"toggle_ui" json:"toggleUI"`
 		ToggleQueueDisplay      string `yaml:"toggle_queue_display" json:"toggleQueueDisplay"`
 		PasteNextDisplay        string `yaml:"paste_next_display" json:"pasteNextDisplay"`
 		ToggleQueueOrderDisplay string `yaml:"toggle_queue_order_display" json:"toggleQueueOrderDisplay"`
+		ToggleUIDisplay         string `yaml:"toggle_ui_display" json:"toggleUIDisplay"`
 	} `yaml:"hotkeys" json:"hotkeys"`
 	Clipboard struct {
 		WatchDebounceMs int `yaml:"watch_debounce_ms" json:"watchDebounceMs"`
@@ -207,7 +224,8 @@ type Config struct {
 		EnableMacros    bool `yaml:"enable_macros" json:"enableMacros"`
 		EnableLab       bool `yaml:"enable_lab" json:"enableLab"`
 	} `yaml:"features" json:"features"`
-	Macros []Macro `yaml:"macros" json:"macros"`
+	UI     UIConfig `yaml:"ui" json:"ui"`
+	Macros []Macro  `yaml:"macros" json:"macros"`
 }
 
 // SafeConfig wraps Config with RWMutex for thread-safe access
@@ -223,17 +241,42 @@ func NewSafeConfig(cfg *Config) *SafeConfig {
 	}
 }
 
+func executableDir() string {
+	exePath, err := os.Executable()
+	if err != nil || exePath == "" {
+		return "."
+	}
+	return filepath.Dir(exePath)
+}
+
+func ConfigPath() string {
+	return filepath.Join(executableDir(), "config.yml")
+}
+
+func ResolvePath(path string) string {
+	if path == "" {
+		return executableDir()
+	}
+	if filepath.IsAbs(path) {
+		return path
+	}
+	return filepath.Clean(filepath.Join(executableDir(), path))
+}
+
+func cloneConfig(src *Config) *Config {
+	copyCfg := defaultConfig()
+	*copyCfg = *src
+	copyCfg.Macros = make([]Macro, len(src.Macros))
+	copy(copyCfg.Macros, src.Macros)
+	return copyCfg
+}
+
 // Get returns a deep copy of the current config for safe reading
 func (sc *SafeConfig) Get() *Config {
 	sc.mu.RLock()
 	defer sc.mu.RUnlock()
 
-	// Create a deep copy to ensure that the original config isn't modified
-	copyCfg := defaultConfig()
-	*copyCfg = *sc.cfg
-	copyCfg.Macros = make([]Macro, len(sc.cfg.Macros))
-	copy(copyCfg.Macros, sc.cfg.Macros)
-	return copyCfg
+	return cloneConfig(sc.cfg)
 }
 
 // Update updates the config with a new config value and saves it to disk
@@ -253,16 +296,38 @@ func (sc *SafeConfig) Update(newCfg *Config) error {
 	return nil
 }
 
+// Mutate safely applies a partial config update and saves it to disk.
+func (sc *SafeConfig) Mutate(fn func(cfg *Config)) error {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+
+	nextCfg := cloneConfig(sc.cfg)
+	fn(nextCfg)
+
+	if err := saveConfig(nextCfg); err != nil {
+		return err
+	}
+
+	*sc.cfg = *nextCfg
+	if sc.cfg.Macros == nil {
+		sc.cfg.Macros = []Macro{}
+	}
+	return nil
+}
+
 func defaultConfig() *Config {
 	cfg := &Config{}
 	cfg.App.DataDir = "."
 	cfg.App.Silent = false
+	cfg.App.Logs = false
 	cfg.Hotkeys.ToggleQueueDisplay = "Ctrl+Alt+C"
 	cfg.Hotkeys.PasteNextDisplay = "Ctrl+Alt+V"
 	cfg.Hotkeys.ToggleQueue = "sig:AQADCgBDAC4AAAAAAAAB"
 	cfg.Hotkeys.PasteNext = "sig:AQADCgBWAC8AAAAAAAAB"
 	cfg.Hotkeys.ToggleQueueOrder = ""
+	cfg.Hotkeys.ToggleUI = ""
 	cfg.Hotkeys.ToggleQueueOrderDisplay = ""
+	cfg.Hotkeys.ToggleUIDisplay = ""
 	cfg.Clipboard.WatchDebounceMs = 30
 	cfg.Clipboard.PasteDelayMs = 50
 	cfg.Clipboard.RestoreDelayMs = 250
@@ -270,7 +335,11 @@ func defaultConfig() *Config {
 	cfg.Features.EnableQueue = true
 	cfg.Features.EnableClipboard = true
 	cfg.Features.EnableMacros = true
-	cfg.Features.EnableLab = true
+	cfg.Features.EnableLab = false
+	cfg.UI.Visible = false
+	cfg.UI.HasBounds = false
+	cfg.UI.Width = 500
+	cfg.UI.Height = 300
 	cfg.Macros = []Macro{}
 	return cfg
 }
@@ -296,6 +365,13 @@ func EnsureSignatures(cfg *Config) error {
 			return err
 		}
 		cfg.Hotkeys.ToggleQueueOrder = sig
+	}
+	if cfg.Hotkeys.ToggleUI == "" && cfg.Hotkeys.ToggleUIDisplay != "" {
+		sig, err := generateSignatureFromHotkey(cfg.Hotkeys.ToggleUIDisplay)
+		if err != nil {
+			return err
+		}
+		cfg.Hotkeys.ToggleUI = sig
 	}
 	return nil
 }
@@ -334,8 +410,10 @@ func validateConfig(cfg *Config) error {
 }
 
 func Load() (*Config, error) {
+	configPath := ConfigPath()
+
 	// Check if config file exists
-	if _, err := os.Stat("config.yml"); os.IsNotExist(err) {
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		// Create default config
 		cfg := defaultConfig()
 		if err := EnsureSignatures(cfg); err != nil {
@@ -344,11 +422,14 @@ func Load() (*Config, error) {
 		if err := saveConfig(cfg); err != nil {
 			return nil, err
 		}
+		if err := os.MkdirAll(ResolvePath(cfg.App.DataDir), 0755); err != nil {
+			return nil, err
+		}
 		return cfg, nil
 	}
 
 	// Read existing config file
-	data, err := os.ReadFile("config.yml")
+	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return nil, err
 	}
@@ -387,7 +468,7 @@ func Load() (*Config, error) {
 			return nil, err
 		}
 		// Ensure data dir exists
-		if err := os.MkdirAll(cfg.App.DataDir, 0755); err != nil {
+		if err := os.MkdirAll(ResolvePath(cfg.App.DataDir), 0755); err != nil {
 			return nil, err
 		}
 		return cfg, nil
@@ -404,7 +485,7 @@ func Load() (*Config, error) {
 	}
 
 	// Ensure data dir exists
-	if err := os.MkdirAll(cfg.App.DataDir, 0755); err != nil {
+	if err := os.MkdirAll(ResolvePath(cfg.App.DataDir), 0755); err != nil {
 		return nil, err
 	}
 
@@ -417,5 +498,7 @@ func saveConfig(cfg *Config) error {
 		return err
 	}
 
-	return os.WriteFile("config.yml", data, 0644)
+	normalized := yamlQuotedYKeyPattern.ReplaceAllString(string(data), "${1}y:")
+
+	return os.WriteFile(ConfigPath(), []byte(normalized), 0644)
 }
