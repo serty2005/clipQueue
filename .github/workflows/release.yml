@@ -73,10 +73,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ needs.detect-release.outputs.version }}
         run: |
-          gh release view $env:RELEASE_VERSION *> $null
-          if ($LASTEXITCODE -eq 0) {
+          & gh release view $env:RELEASE_VERSION *> $null
+          $releaseViewExitCode = $LASTEXITCODE
+          if ($releaseViewExitCode -eq 0) {
             Write-Error "Релиз с тегом $env:RELEASE_VERSION уже существует."
           }
+          if ($releaseViewExitCode -ne 1) {
+            exit $releaseViewExitCode
+          }
+          $global:LASTEXITCODE = 0
 
       - name: Опубликовать релиз
         shell: pwsh
