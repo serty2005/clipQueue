@@ -61,6 +61,12 @@ const (
 	ModWin   uint8 = 1 << 3
 )
 
+const (
+	mouseButtonEdgeLegacy byte = 0
+	mouseButtonEdgeDown   byte = 1
+	mouseButtonEdgeUp     byte = 2
+)
+
 // NewInputSignature создаёт сигнатуру из сырых данных
 func NewInputSignature(sourceType InputSourceType, rawData []byte, modifiers uint8) InputSignature {
 	sig := InputSignature{
@@ -160,13 +166,32 @@ func (s *InputSignature) generateDisplayHint() string {
 	return strings.Join(parts, "+")
 }
 
-// Equals проверяет равенство двух сигнатур
-func (s *InputSignature) Equals(other *InputSignature) bool {
-	// Быстрая проверка по хешу
-	if s.Hash != other.Hash {
+func decodeMouseButtonRawData(rawData []byte) (button byte, edge byte, ok bool) {
+	if len(rawData) == 0 {
+		return 0, 0, false
+	}
+	button = rawData[0]
+	edge = mouseButtonEdgeLegacy
+	if len(rawData) >= 2 && (rawData[1] == mouseButtonEdgeDown || rawData[1] == mouseButtonEdgeUp) {
+		edge = rawData[1]
+	}
+	return button, edge, true
+}
+
+func mouseButtonRawDataEqual(left []byte, right []byte) bool {
+	leftButton, leftEdge, leftOK := decodeMouseButtonRawData(left)
+	rightButton, rightEdge, rightOK := decodeMouseButtonRawData(right)
+	if !leftOK || !rightOK || leftButton != rightButton {
 		return false
 	}
+	if leftEdge == mouseButtonEdgeLegacy || rightEdge == mouseButtonEdgeLegacy {
+		return leftEdge != mouseButtonEdgeDown && rightEdge != mouseButtonEdgeDown
+	}
+	return leftEdge == rightEdge
+}
 
+// Equals проверяет равенство двух сигнатур
+func (s *InputSignature) Equals(other *InputSignature) bool {
 	// Проверка типа источника
 	if s.SourceType != other.SourceType {
 		return false
@@ -174,6 +199,15 @@ func (s *InputSignature) Equals(other *InputSignature) bool {
 
 	// Проверка модификаторов
 	if s.ModifierState != other.ModifierState {
+		return false
+	}
+
+	if s.SourceType == SourceMouseButton {
+		return mouseButtonRawDataEqual(s.RawData, other.RawData)
+	}
+
+	// Быстрая проверка по хешу
+	if s.Hash != other.Hash {
 		return false
 	}
 
@@ -324,13 +358,26 @@ func (m *SignatureMatcher) Match(sig *InputSignature) func() {
 	defer m.mu.RUnlock()
 
 	regs, ok := m.signatures[sig.Hash]
-	if !ok {
+	if ok {
+		for _, reg := range regs {
+			if reg.Signature.Equals(sig) {
+				return reg.Callback
+			}
+		}
+	}
+
+	if sig.SourceType != SourceMouseButton {
 		return nil
 	}
 
-	for _, reg := range regs {
-		if reg.Signature.Equals(sig) {
-			return reg.Callback
+	for _, regs := range m.signatures {
+		for _, reg := range regs {
+			if reg.Signature.SourceType != SourceMouseButton {
+				continue
+			}
+			if reg.Signature.Equals(sig) {
+				return reg.Callback
+			}
 		}
 	}
 

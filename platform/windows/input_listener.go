@@ -22,7 +22,8 @@ type InputListener struct {
 	keyboardHook uintptr
 	mouseHook    uintptr
 
-	matcher *SignatureMatcher
+	matcher             *SignatureMatcher
+	pendingMouseHotkeys map[byte]func()
 
 	// Режим захвата
 	captureMode atomic.Bool
@@ -40,10 +41,25 @@ type InputListener struct {
 // NewInputListener создаёт новый слушатель ввода
 func NewInputListener(hwnd uintptr) *InputListener {
 	return &InputListener{
-		hwnd:        hwnd,
-		matcher:     NewSignatureMatcher(),
-		captureChan: make(chan InputSignature, 1),
+		hwnd:                hwnd,
+		matcher:             NewSignatureMatcher(),
+		pendingMouseHotkeys: make(map[byte]func()),
+		captureChan:         make(chan InputSignature, 1),
 	}
+}
+
+func (l *InputListener) storePendingMouseHotkey(button byte, callback func()) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.pendingMouseHotkeys[button] = callback
+}
+
+func (l *InputListener) consumePendingMouseHotkey(button byte) func() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	callback := l.pendingMouseHotkeys[button]
+	delete(l.pendingMouseHotkeys, button)
+	return callback
 }
 
 // GetMatcher возвращает матчер для регистрации сигнатур
@@ -310,63 +326,55 @@ func (l *InputListener) setMouseHook() (uintptr, error) {
 			switch wParam {
 			case WM_LBUTTONDOWN:
 				sourceType = SourceMouseButton
-				rawData = []byte{1}
+				rawData = []byte{1, mouseButtonEdgeDown}
 				shouldProcess = true
 
 			case WM_RBUTTONDOWN:
 				sourceType = SourceMouseButton
-				rawData = []byte{2}
+				rawData = []byte{2, mouseButtonEdgeDown}
 				shouldProcess = true
 
 			case WM_MBUTTONDOWN:
 				sourceType = SourceMouseButton
-				rawData = []byte{3}
+				rawData = []byte{3, mouseButtonEdgeDown}
 				shouldProcess = true
 
 			case WM_XBUTTONDOWN:
 				sourceType = SourceMouseButton
 				xButton := (mouse.MouseData >> 16) & 0xFFFF
 				if xButton == XBUTTON1 {
-					rawData = []byte{4}
+					rawData = []byte{4, mouseButtonEdgeDown}
 				} else if xButton == XBUTTON2 {
-					rawData = []byte{5}
+					rawData = []byte{5, mouseButtonEdgeDown}
 				} else {
-					// Дополнительные кнопки
-					rawData = make([]byte, 6)
-					rawData[0] = byte(xButton + 3)
-					binary.LittleEndian.PutUint32(rawData[1:5], mouse.MouseData)
-					rawData[5] = byte(xButton)
+					rawData = []byte{byte(xButton + 3), mouseButtonEdgeDown}
 				}
 				shouldProcess = true
 
 			case WM_LBUTTONUP:
 				sourceType = SourceMouseButton
-				rawData = []byte{1}
+				rawData = []byte{1, mouseButtonEdgeUp}
 				shouldProcess = true
 
 			case WM_RBUTTONUP:
 				sourceType = SourceMouseButton
-				rawData = []byte{2}
+				rawData = []byte{2, mouseButtonEdgeUp}
 				shouldProcess = true
 
 			case WM_MBUTTONUP:
 				sourceType = SourceMouseButton
-				rawData = []byte{3}
+				rawData = []byte{3, mouseButtonEdgeUp}
 				shouldProcess = true
 
 			case WM_XBUTTONUP:
 				sourceType = SourceMouseButton
 				xButton := (mouse.MouseData >> 16) & 0xFFFF
 				if xButton == XBUTTON1 {
-					rawData = []byte{4}
+					rawData = []byte{4, mouseButtonEdgeUp}
 				} else if xButton == XBUTTON2 {
-					rawData = []byte{5}
+					rawData = []byte{5, mouseButtonEdgeUp}
 				} else {
-					// Дополнительные кнопки
-					rawData = make([]byte, 6)
-					rawData[0] = byte(xButton + 3)
-					binary.LittleEndian.PutUint32(rawData[1:5], mouse.MouseData)
-					rawData[5] = byte(xButton)
+					rawData = []byte{byte(xButton + 3), mouseButtonEdgeUp}
 				}
 				shouldProcess = true
 
@@ -393,6 +401,13 @@ func (l *InputListener) setMouseHook() (uintptr, error) {
 
 				// Режим захвата
 				if l.captureMode.Load() {
+					if sourceType == SourceMouseButton {
+						_, edge, ok := decodeMouseButtonRawData(rawData)
+						if ok && edge == mouseButtonEdgeDown {
+							logger.Debug("Capture waiting for mouse button release: %s", sig.DisplayHint)
+							return 1
+						}
+					}
 					l.captureMode.Store(false)
 
 					select {
@@ -405,6 +420,24 @@ func (l *InputListener) setMouseHook() (uintptr, error) {
 				}
 
 				// Режим сопоставления
+				if sourceType == SourceMouseButton {
+					button, edge, ok := decodeMouseButtonRawData(rawData)
+					if ok && edge == mouseButtonEdgeDown {
+						probe := NewInputSignature(sourceType, []byte{button, mouseButtonEdgeUp}, mods)
+						if callback := l.matcher.Match(&probe); callback != nil {
+							l.storePendingMouseHotkey(button, callback)
+							logger.Debug("Matched mouse down, waiting for release: %s", sig.DisplayHint)
+							return 1
+						}
+					}
+					if ok && edge == mouseButtonEdgeUp {
+						if callback := l.consumePendingMouseHotkey(button); callback != nil {
+							logger.Debug("Matched mouse up: %s", sig.DisplayHint)
+							go callback()
+							return 1
+						}
+					}
+				}
 				if callback := l.matcher.Match(&sig); callback != nil {
 					logger.Debug("Matched mouse: %s", sig.DisplayHint)
 					go callback()

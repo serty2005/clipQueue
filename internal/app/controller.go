@@ -129,16 +129,16 @@ func (c *Controller) ToggleQueue() {
 		cb(true, count, mode)
 		uiCB()
 	} else {
-		// Disable queue mode and clear queued markers while keeping history intact.
+		// Disable queue mode but keep queued items so the user can resume later.
 		c.queueEnabled = false
-		c.queue = nil
 		cb := c.onStateChange
 		uiCB := c.onUIRefresh
+		count := len(c.queue)
 		mode := c.orderStrategy
 		c.mu.Unlock()
 
 		logger.Info("Queue mode disabled")
-		cb(false, 0, mode)
+		cb(false, count, mode)
 		uiCB()
 	}
 }

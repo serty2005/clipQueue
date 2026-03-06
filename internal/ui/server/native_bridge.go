@@ -36,7 +36,8 @@ func (s *Server) buildHistoryDTOs() []HistoryItemDTO {
 	}
 
 	items := make([]HistoryItemDTO, 0, len(history))
-	for _, item := range history {
+	for i := len(history) - 1; i >= 0; i-- {
+		item := history[i]
 		dto := HistoryItemDTO{
 			ID:        item.ID,
 			Type:      item.Type.String(),

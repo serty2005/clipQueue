@@ -6,6 +6,7 @@ Windows-only application for managing clipboard history with global hotkeys.
 
 - **Queue Mode**: Press `Alt+C` to toggle queue mode
 - **Paste Next**: Press `Alt+V` to paste the next item from the queue
+- **Queue Order Toggle**: Assign an optional hotkey to switch between `LIFO` and `FIFO`
 - **Clipboard Watcher**: Automatically detects clipboard changes
 
 ## Building
@@ -34,10 +35,11 @@ go build -o clipqueue.exe
 3. Press `Alt+C` - you should see "QUEUE ON/OFF" in the console.
 
 4. Press `Alt+V` - you should see "PASTE NEXT" in the console.
+5. If a queue order hotkey is assigned, press it - you should see the queue order switch between `LIFO` and `FIFO`.
 
-5. Copy any text in another application - you should see detailed clipboard information in the console, including type, length, and preview.
+6. Copy any text in another application - you should see detailed clipboard information in the console, including type, length, and preview.
 
-6. Copy one or more files in File Explorer - you should see the number of files and a preview of their paths in the console.
+7. Copy one or more files in File Explorer - you should see the number of files and a preview of their paths in the console.
 
 7. Copy an image (e.g., from Paint or a browser) - you should see the image type and preview information in the console.
 
@@ -107,6 +109,7 @@ app:
 hotkeys:
   toggle_queue: Alt+C
   paste_next: Alt+V
+  toggle_queue_order: ""
 clipboard:
   watch_debounce_ms: 30
 queue:

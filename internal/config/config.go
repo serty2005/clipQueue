@@ -165,8 +165,9 @@ type oldConfig struct {
 		Silent  bool   `yaml:"silent" json:"silent"`
 	} `yaml:"app"`
 	Hotkeys struct {
-		ToggleQueue string `yaml:"toggle_queue" json:"toggleQueue"`
-		PasteNext   string `yaml:"paste_next" json:"pasteNext"`
+		ToggleQueue      string `yaml:"toggle_queue" json:"toggleQueue"`
+		PasteNext        string `yaml:"paste_next" json:"pasteNext"`
+		ToggleQueueOrder string `yaml:"toggle_queue_order" json:"toggleQueueOrder"`
 	} `yaml:"hotkeys"`
 	Clipboard struct {
 		WatchDebounceMs int `yaml:"watch_debounce_ms" json:"watchDebounceMs"`
@@ -185,10 +186,12 @@ type Config struct {
 		Silent  bool   `yaml:"silent" json:"silent"`
 	} `yaml:"app" json:"app"`
 	Hotkeys struct {
-		ToggleQueue        string `yaml:"toggle_queue" json:"toggleQueue"`
-		PasteNext          string `yaml:"paste_next" json:"pasteNext"`
-		ToggleQueueDisplay string `yaml:"toggle_queue_display" json:"toggleQueueDisplay"`
-		PasteNextDisplay   string `yaml:"paste_next_display" json:"pasteNextDisplay"`
+		ToggleQueue             string `yaml:"toggle_queue" json:"toggleQueue"`
+		PasteNext               string `yaml:"paste_next" json:"pasteNext"`
+		ToggleQueueOrder        string `yaml:"toggle_queue_order" json:"toggleQueueOrder"`
+		ToggleQueueDisplay      string `yaml:"toggle_queue_display" json:"toggleQueueDisplay"`
+		PasteNextDisplay        string `yaml:"paste_next_display" json:"pasteNextDisplay"`
+		ToggleQueueOrderDisplay string `yaml:"toggle_queue_order_display" json:"toggleQueueOrderDisplay"`
 	} `yaml:"hotkeys" json:"hotkeys"`
 	Clipboard struct {
 		WatchDebounceMs int `yaml:"watch_debounce_ms" json:"watchDebounceMs"`
@@ -258,6 +261,8 @@ func defaultConfig() *Config {
 	cfg.Hotkeys.PasteNextDisplay = "Ctrl+Alt+V"
 	cfg.Hotkeys.ToggleQueue = "sig:AQADCgBDAC4AAAAAAAAB"
 	cfg.Hotkeys.PasteNext = "sig:AQADCgBWAC8AAAAAAAAB"
+	cfg.Hotkeys.ToggleQueueOrder = ""
+	cfg.Hotkeys.ToggleQueueOrderDisplay = ""
 	cfg.Clipboard.WatchDebounceMs = 30
 	cfg.Clipboard.PasteDelayMs = 50
 	cfg.Clipboard.RestoreDelayMs = 250
@@ -284,6 +289,13 @@ func EnsureSignatures(cfg *Config) error {
 			return err
 		}
 		cfg.Hotkeys.PasteNext = sig
+	}
+	if cfg.Hotkeys.ToggleQueueOrder == "" && cfg.Hotkeys.ToggleQueueOrderDisplay != "" {
+		sig, err := generateSignatureFromHotkey(cfg.Hotkeys.ToggleQueueOrderDisplay)
+		if err != nil {
+			return err
+		}
+		cfg.Hotkeys.ToggleQueueOrder = sig
 	}
 	return nil
 }
@@ -349,6 +361,7 @@ func Load() (*Config, error) {
 		cfg.App = oldCfg.App
 		cfg.Hotkeys.ToggleQueue = oldCfg.Hotkeys.ToggleQueue
 		cfg.Hotkeys.PasteNext = oldCfg.Hotkeys.PasteNext
+		cfg.Hotkeys.ToggleQueueOrder = oldCfg.Hotkeys.ToggleQueueOrder
 		cfg.Clipboard = oldCfg.Clipboard
 		cfg.Queue = oldCfg.Queue
 		cfg.Macros = make([]Macro, 0, len(oldCfg.Macros))

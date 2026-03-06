@@ -173,6 +173,11 @@ func main() {
 		go controller.ToggleQueue()
 	})
 
+	host.OnHotkeyToggleQueueOrder(func() {
+		logger.Debug("ToggleQueueOrder hotkey pressed")
+		go controller.ToggleOrder()
+	})
+
 	host.OnHotkeyPasteNext(func() {
 		logger.Debug("PasteNext hotkey pressed")
 		go controller.PasteNext()

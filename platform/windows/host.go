@@ -63,33 +63,35 @@ const (
 )
 
 type Host struct {
-	cfg               *config.SafeConfig
-	controller        MacroExecutor
-	hwnd              uintptr
-	className         *uint16
-	running           bool
-	onToggleQueue     func()
-	onPasteNext       func()
-	onClipboardUpdate func()
-	onTrayCommand     func(id uint32) // Callback for system tray menu commands
-	inputListener     *InputListener
-	clipboardWatcher  *ClipboardWatcher
-	tray              *Tray         // System tray icon
-	done              chan struct{} // Channel to signal that host has stopped
-	captureChan       chan string   // Channel for hotkey capture results (legacy)
+	cfg                *config.SafeConfig
+	controller         MacroExecutor
+	hwnd               uintptr
+	className          *uint16
+	running            bool
+	onToggleQueue      func()
+	onToggleQueueOrder func()
+	onPasteNext        func()
+	onClipboardUpdate  func()
+	onTrayCommand      func(id uint32) // Callback for system tray menu commands
+	inputListener      *InputListener
+	clipboardWatcher   *ClipboardWatcher
+	tray               *Tray         // System tray icon
+	done               chan struct{} // Channel to signal that host has stopped
+	captureChan        chan string   // Channel for hotkey capture results (legacy)
 }
 
 func NewHost(cfg *config.SafeConfig, controller MacroExecutor) (*Host, error) {
 
 	host := &Host{
-		cfg:               cfg,
-		controller:        controller,
-		onToggleQueue:     func() {},
-		onPasteNext:       func() {},
-		onClipboardUpdate: func() {},
-		onTrayCommand:     func(id uint32) {}, // Empty default callback
-		done:              make(chan struct{}),
-		captureChan:       make(chan string, 1), // Buffered to avoid blocking
+		cfg:                cfg,
+		controller:         controller,
+		onToggleQueue:      func() {},
+		onToggleQueueOrder: func() {},
+		onPasteNext:        func() {},
+		onClipboardUpdate:  func() {},
+		onTrayCommand:      func(id uint32) {}, // Empty default callback
+		done:               make(chan struct{}),
+		captureChan:        make(chan string, 1), // Buffered to avoid blocking
 	}
 
 	host.inputListener = NewInputListener(0) // hwnd will be set later
@@ -110,6 +112,10 @@ func (h *Host) Wait() {
 
 func (h *Host) OnHotkeyToggleQueue(callback func()) {
 	h.onToggleQueue = callback
+}
+
+func (h *Host) OnHotkeyToggleQueueOrder(callback func()) {
+	h.onToggleQueueOrder = callback
 }
 
 func (h *Host) OnHotkeyPasteNext(callback func()) {
@@ -166,6 +172,20 @@ func (h *Host) registerConfiguredHotkeys() {
 		}
 	}
 
+	// ToggleQueueOrder
+	if cfg.Features.EnableQueue && cfg.Hotkeys.ToggleQueueOrder != "" {
+		hotkeyStr := cfg.Hotkeys.ToggleQueueOrder
+		sig := h.parseHotkeyToSignature(hotkeyStr)
+		if sig != nil {
+			matcher.Register(*sig, "toggle_queue_order", func() {
+				h.onToggleQueueOrder()
+			})
+			logger.Info("Успешная регистрация хоткея ToggleQueueOrder: %s", hotkeyStr)
+		} else {
+			logger.Error("Не удалось зарегистрировать хоткей ToggleQueueOrder: %s", cfg.Hotkeys.ToggleQueueOrder)
+		}
+	}
+
 	// Макросы
 	if cfg.Features.EnableMacros {
 		for _, macro := range cfg.Macros {
@@ -181,13 +201,19 @@ func (h *Host) registerConfiguredHotkeys() {
 				sig = h.parseHotkeyToSignature(hotkeyStr)
 			}
 			if sig != nil {
-				matcher.Register(*sig, "macro:"+hotkeyStr, func() {
-					h.controller.ExecuteMacro(m)
-				})
+				matcher.Register(*sig, "macro:"+hotkeyStr, h.buildMacroCallback(m))
 				logger.Info("Успешная регистрация макроса %s: %s", macro.Name, hotkeyStr)
 			} else {
 				logger.Error("Не удалось зарегистрировать макрос %s: Signature='%s', Hotkey='%s'", macro.Name, macro.Signature, macro.Hotkey)
 			}
+		}
+	}
+}
+
+func (h *Host) buildMacroCallback(macro config.Macro) func() {
+	return func() {
+		if err := h.controller.ExecuteMacro(macro); err != nil {
+			logger.Error("Failed to execute macro %s: %v", macro.Name, err)
 		}
 	}
 }
@@ -267,12 +293,7 @@ func (h *Host) UpdateTrayTooltip(text string) error {
 // RegisterMacro registers a macro hotkey that sends text when pressed
 func (h *Host) RegisterMacro(hotkey string, macro config.Macro) error {
 	if sig := h.parseHotkeyToSignature(hotkey); sig != nil {
-		h.inputListener.GetMatcher().Register(*sig, "macro:"+hotkey, func() {
-			logger.Debug("Macro hotkey pressed: %s", hotkey)
-			if err := h.controller.ExecuteMacro(macro); err != nil {
-				logger.Error("Failed to execute macro %s: %v", hotkey, err)
-			}
-		})
+		h.inputListener.GetMatcher().Register(*sig, "macro:"+hotkey, h.buildMacroCallback(macro))
 		return nil
 	}
 	return fmt.Errorf("failed to parse hotkey: %s", hotkey)

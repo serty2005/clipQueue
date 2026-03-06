@@ -8,6 +8,7 @@ import (
 	"image/color"
 	"image/draw"
 	"image/png"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -509,10 +510,12 @@ func calculateFilesSize(files []string) int {
 
 func formatTextPreview(text string) string {
 	const maxLength = 80
-	if len(text) <= maxLength {
-		return text
+	clean := strings.ToValidUTF8(strings.ReplaceAll(text, "\x00", ""), "")
+	runes := []rune(clean)
+	if len(runes) <= maxLength {
+		return clean
 	}
-	return text[:maxLength] + "..."
+	return string(runes[:maxLength]) + "..."
 }
 
 func formatFilesPreview(files []string) string {
