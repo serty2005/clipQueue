@@ -398,6 +398,13 @@ func TypeStringHardware(text string) error {
 // SendCtrlV sends the Ctrl+V keystroke combination to the system
 // SendCtrlV sends the Ctrl+V keystroke combination to the system
 func SendCtrlV() error {
+	defer func() {
+		sendInput([]INPUT{{
+			Type: INPUT_KEYBOARD,
+			Ki:   KEYBDINPUT{Wvk: VK_CONTROL, DwFlags: KEYEVENTF_KEYUP},
+		}})
+	}()
+
 	// Create Ctrl+V keystroke sequence
 	// First, ensure any Alt key (from Alt+V hotkey) is released
 	inputs := []INPUT{
@@ -426,7 +433,7 @@ func SendCtrlV() error {
 	// Small delay between Ctrl down and V down to prevent keystroke merging
 	time.Sleep(10 * time.Millisecond)
 
-	// Send V down and up, then Ctrl up
+	// Send V down and up
 	inputs = []INPUT{
 		{
 			Type: INPUT_KEYBOARD,
@@ -438,13 +445,6 @@ func SendCtrlV() error {
 			Type: INPUT_KEYBOARD,
 			Ki: KEYBDINPUT{
 				Wvk:     VK_V,
-				DwFlags: KEYEVENTF_KEYUP,
-			},
-		},
-		{
-			Type: INPUT_KEYBOARD,
-			Ki: KEYBDINPUT{
-				Wvk:     VK_CONTROL,
 				DwFlags: KEYEVENTF_KEYUP,
 			},
 		},

@@ -97,13 +97,13 @@ func Read() (ClipboardContent, error) {
 		return content, err
 	}
 	clipboardOpenTime := time.Now()
+	defer closeClipboard()
+	defer logger.Debug("Clipboard open duration: %v", time.Since(clipboardOpenTime))
 
 	// Determine content type and read data
 	if hasClipboardFormat(CF_HDROP) {
 		content.Type = Files
 		files, err := readHDrop()
-		closeClipboard() // Close clipboard early since we've read all needed data
-		logger.Debug("Clipboard open duration: %v", time.Since(clipboardOpenTime))
 
 		if err != nil {
 			logger.Error("Failed to read CF_HDROP: %v", err)
@@ -115,8 +115,6 @@ func Read() (ClipboardContent, error) {
 		content.Preview = formatFilesPreview(files)
 	} else if hasClipboardFormat(CF_DIBV5) {
 		dibData, err := readClipboardDIBBytes(CF_DIBV5)
-		closeClipboard() // Close clipboard before DIB conversion
-		logger.Debug("Clipboard open duration: %v", time.Since(clipboardOpenTime))
 
 		if err == nil {
 			imgData, err := dibToPNG(dibData)
@@ -129,17 +127,8 @@ func Read() (ClipboardContent, error) {
 				logger.Warn("Unsupported DIBV5 format, trying CF_DIB")
 
 				// Try CF_DIB as fallback
-				if err = openClipboardWithRetry(); err != nil {
-					logger.Error("Failed to re-open clipboard for reading CF_DIB: %v", err)
-					logger.Debug("Total Read() duration: %v", time.Since(startTime))
-					return content, err
-				}
-				clipboardOpenTime = time.Now()
-
 				if hasClipboardFormat(CF_DIB) {
 					dibData, err = readClipboardDIBBytes(CF_DIB)
-					closeClipboard() // Close clipboard again before conversion
-					logger.Debug("Clipboard open duration: %v", time.Since(clipboardOpenTime))
 
 					if err == nil {
 						imgData, err = dibToPNG(dibData)
@@ -162,9 +151,6 @@ func Read() (ClipboardContent, error) {
 					} else {
 						logger.Warn("Unsupported DIB format")
 					}
-				} else {
-					closeClipboard() // Close clipboard even if no CF_DIB
-					logger.Debug("Clipboard open duration: %v", time.Since(clipboardOpenTime))
 				}
 			} else {
 				logger.Error("Failed to convert DIBV5 to PNG: %v", err)
@@ -178,8 +164,6 @@ func Read() (ClipboardContent, error) {
 		}
 	} else if hasClipboardFormat(CF_DIB) {
 		dibData, err := readClipboardDIBBytes(CF_DIB)
-		closeClipboard() // Close clipboard before conversion
-		logger.Debug("Clipboard open duration: %v", time.Since(clipboardOpenTime))
 
 		if err == nil {
 			imgData, err := dibToPNG(dibData)
@@ -205,8 +189,6 @@ func Read() (ClipboardContent, error) {
 	} else if hasClipboardFormat(CF_UNICODETEXT) {
 		content.Type = Text
 		text, err := readUnicodeText()
-		closeClipboard() // Close clipboard early
-		logger.Debug("Clipboard open duration: %v", time.Since(clipboardOpenTime))
 
 		if err != nil {
 			logger.Error("Failed to read CF_UNICODETEXT: %v", err)
@@ -217,8 +199,6 @@ func Read() (ClipboardContent, error) {
 		content.SizeBytes = len([]byte(text))
 		content.Preview = formatTextPreview(text)
 	} else {
-		closeClipboard() // Close clipboard for empty case
-		logger.Debug("Clipboard open duration: %v", time.Since(clipboardOpenTime))
 		content.Preview = "Empty clipboard"
 	}
 

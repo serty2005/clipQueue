@@ -40,7 +40,7 @@ type SequenceRecordingStatus struct {
 }
 
 type SequencePlaybackOptions struct {
-	NormalizeDelays bool `json:"normalizeDelays"`
+	NormalizeDelays bool   `json:"normalizeDelays"`
 	FixedDelayMs    uint32 `json:"fixedDelayMs"`
 }
 
@@ -79,7 +79,7 @@ func sequenceEventToInput(ev RecordedKeyEvent) INPUT {
 	return INPUT{
 		Type: INPUT_KEYBOARD,
 		Ki: KEYBDINPUT{
-			Wvk:     0,
+			Wvk:     ev.VK,
 			WScan:   ev.ScanCode,
 			DwFlags: flags,
 		},
@@ -99,8 +99,39 @@ func PlayRecordedSequenceWithOptions(seq *RecordedSequence, opts SequencePlaybac
 		return fmt.Errorf("sequence has no events")
 	}
 
+	type keyState struct {
+		VK       uint16
+		ScanCode uint16
+		Extended bool
+	}
+	activeKeys := make(map[keyState]bool)
+
+	defer func() {
+		var cleanup []INPUT
+		for ks := range activeKeys {
+			flags := uint32(KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP)
+			if ks.Extended {
+				flags |= KEYEVENTF_EXTENDEDKEY
+			}
+			cleanup = append(cleanup, INPUT{
+				Type: INPUT_KEYBOARD,
+				Ki: KEYBDINPUT{
+					Wvk:     ks.VK,
+					WScan:   ks.ScanCode,
+					DwFlags: flags,
+				},
+			})
+		}
+		if len(cleanup) > 0 {
+			logger.Debug("Sequence playback cleanup: releasing %d stuck keys", len(cleanup))
+			sendInput(cleanup)
+		}
+	}()
+
 	logger.Debug("PlayRecordedSequence start: events=%d recordedHKL=0x%X normalize=%v fixedDelayMs=%d",
 		len(seq.Events), seq.RecordedHKL, opts.NormalizeDelays, opts.FixedDelayMs)
+
+	var firstErr error
 
 	for i, ev := range seq.Events {
 		delayMs := ev.DelayMs
@@ -110,15 +141,36 @@ func PlayRecordedSequenceWithOptions(seq *RecordedSequence, opts SequencePlaybac
 				delayMs = 10000
 			}
 		}
-		if delayMs > 0 {
-			time.Sleep(time.Duration(delayMs) * time.Millisecond)
+		if delayMs < 1 {
+			delayMs = 1 // Минимальная задержка 1 мс для предотвращения потери событий
+		}
+		time.Sleep(time.Duration(delayMs) * time.Millisecond)
+
+		isUp := ev.Message == WM_KEYUP || ev.Message == WM_SYSKEYUP
+		ks := keyState{
+			VK:       ev.VK,
+			ScanCode: ev.ScanCode,
+			Extended: (ev.HookFlags & llkhfExtended) != 0,
+		}
+
+		if isUp {
+			delete(activeKeys, ks)
+		} else {
+			activeKeys[ks] = true
 		}
 
 		input := sequenceEventToInput(ev)
 		if result := sendInput([]INPUT{input}); result != 1 {
 			logger.Error("PlayRecordedSequence send failed at event %d (msg=0x%X scan=0x%X)", i, ev.Message, ev.ScanCode)
-			return syscall.GetLastError()
+			if firstErr == nil {
+				firstErr = syscall.GetLastError()
+			}
+			continue
 		}
+	}
+
+	if firstErr != nil {
+		return firstErr
 	}
 
 	logger.Debug("PlayRecordedSequence completed successfully")
