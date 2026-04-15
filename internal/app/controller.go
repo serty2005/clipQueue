@@ -147,21 +147,37 @@ func (c *Controller) ToggleQueue() {
 func (c *Controller) OnClipboardUpdate() {
 	time.Sleep(50 * time.Millisecond)
 
-	c.mu.Lock()
-
 	// Check for self-event suppression
 	seq := windows.GetClipboardSequenceNumber()
+	c.mu.Lock()
 	if c.isSelfEvent(seq) {
 		logger.Debug("OnClipboardUpdate: пропущено self-событие (seq=%d)", seq)
 		c.mu.Unlock()
 		return
 	}
+	c.mu.Unlock()
 
 	// Read clipboard content
-	content, err := windows.Read()
+	content, err := windows.ReadForClipboardWatcher()
 	if err != nil {
 		logger.Error("OnClipboardUpdate: ошибка чтения буфера обмена - %v", err)
+		return
+	}
+
+	currentSeq := windows.GetClipboardSequenceNumber()
+	if currentSeq != seq {
+		logger.Debug("OnClipboardUpdate: пропущено устаревшее событие (seq=%d, текущий=%d)", seq, currentSeq)
+		return
+	}
+
+	c.mu.Lock()
+
+	if content.Type == windows.Image && len(content.ImagePNG) == 0 {
+		logger.Info("OnClipboardUpdate: автоматический захват изображения пропущен, чтобы не блокировать буфер")
+		c.currentClipboardID = ""
+		uiCB := c.onUIRefresh
 		c.mu.Unlock()
+		uiCB()
 		return
 	}
 

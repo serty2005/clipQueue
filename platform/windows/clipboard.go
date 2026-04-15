@@ -83,22 +83,51 @@ func readClipboardDIBBytes(format uint32) ([]byte, error) {
 	return dibData, nil
 }
 
+type readClipboardOptions struct {
+	allowSlowImages      bool
+	preferTextOverImages bool
+}
+
 // Read reads the current clipboard content and returns it as ClipboardContent
 func Read() (ClipboardContent, error) {
+	return readClipboard(readClipboardOptions{
+		allowSlowImages: true,
+	})
+}
+
+// ReadForClipboardWatcher читает буфер в безопасном режиме для фонового наблюдателя.
+func ReadForClipboardWatcher() (ClipboardContent, error) {
+	return readClipboard(readClipboardOptions{
+		allowSlowImages:      false,
+		preferTextOverImages: true,
+	})
+}
+
+func readClipboard(options readClipboardOptions) (ClipboardContent, error) {
 	var content ClipboardContent
 	content.ID = fmt.Sprintf("%d", time.Now().UnixNano())
 	content.Timestamp = time.Now()
 	startTime := time.Now()
+	defer func() {
+		logger.Debug("Total Read() duration: %v", time.Since(startTime))
+	}()
 
 	// Open clipboard with retry/backoff
 	if err := openClipboardWithRetry(); err != nil {
-		logger.Error("Failed to open clipboard for reading: %v", err)
-		logger.Debug("Total Read() duration: %v", time.Since(startTime))
+		logger.Error("Не удалось открыть буфер для чтения: %v", err)
 		return content, err
 	}
 	clipboardOpenTime := time.Now()
-	defer closeClipboard()
-	defer logger.Debug("Clipboard open duration: %v", time.Since(clipboardOpenTime))
+	clipboardClosed := false
+	closeClipboardTracked := func() {
+		if clipboardClosed {
+			return
+		}
+		closeClipboard()
+		clipboardClosed = true
+		logger.Debug("Clipboard open duration: %v", time.Since(clipboardOpenTime))
+	}
+	defer closeClipboardTracked()
 
 	// Determine content type and read data
 	if hasClipboardFormat(CF_HDROP) {
@@ -106,103 +135,76 @@ func Read() (ClipboardContent, error) {
 		files, err := readHDrop()
 
 		if err != nil {
-			logger.Error("Failed to read CF_HDROP: %v", err)
-			logger.Debug("Total Read() duration: %v", time.Since(startTime))
+			logger.Error("Не удалось прочитать CF_HDROP: %v", err)
 			return content, err
 		}
 		content.Files = files
 		content.SizeBytes = calculateFilesSize(files)
 		content.Preview = formatFilesPreview(files)
-	} else if hasClipboardFormat(CF_DIBV5) {
-		dibData, err := readClipboardDIBBytes(CF_DIBV5)
+		return content, nil
+	}
 
-		if err == nil {
-			imgData, err := dibToPNG(dibData)
-			if err == nil {
-				content.Type = Image
-				content.ImagePNG = imgData
-				content.SizeBytes = len(imgData)
-				content.Preview = formatImagePreview(imgData)
-			} else if err == ErrUnsupportedDIB {
-				logger.Warn("Unsupported DIBV5 format, trying CF_DIB")
-
-				// Try CF_DIB as fallback
-				if hasClipboardFormat(CF_DIB) {
-					dibData, err = readClipboardDIBBytes(CF_DIB)
-
-					if err == nil {
-						imgData, err = dibToPNG(dibData)
-						if err == nil {
-							content.Type = Image
-							content.ImagePNG = imgData
-							content.SizeBytes = len(imgData)
-							content.Preview = formatImagePreview(imgData)
-						} else if err != ErrUnsupportedDIB {
-							logger.Error("Failed to convert DIB to PNG: %v", err)
-							logger.Debug("Total Read() duration: %v", time.Since(startTime))
-							return content, err
-						} else {
-							logger.Warn("Unsupported DIB format")
-						}
-					} else if err != ErrUnsupportedDIB {
-						logger.Error("Failed to read CF_DIB: %v", err)
-						logger.Debug("Total Read() duration: %v", time.Since(startTime))
-						return content, err
-					} else {
-						logger.Warn("Unsupported DIB format")
-					}
-				}
-			} else {
-				logger.Error("Failed to convert DIBV5 to PNG: %v", err)
-				logger.Debug("Total Read() duration: %v", time.Since(startTime))
-				return content, err
-			}
-		} else {
-			logger.Error("Failed to read CF_DIBV5: %v", err)
-			logger.Debug("Total Read() duration: %v", time.Since(startTime))
-			return content, err
-		}
-	} else if hasClipboardFormat(CF_DIB) {
-		dibData, err := readClipboardDIBBytes(CF_DIB)
-
-		if err == nil {
-			imgData, err := dibToPNG(dibData)
-			if err == nil {
-				content.Type = Image
-				content.ImagePNG = imgData
-				content.SizeBytes = len(imgData)
-				content.Preview = formatImagePreview(imgData)
-			} else if err != ErrUnsupportedDIB {
-				logger.Error("Failed to convert DIB to PNG: %v", err)
-				logger.Debug("Total Read() duration: %v", time.Since(startTime))
-				return content, err
-			} else {
-				logger.Warn("Unsupported DIB format")
-			}
-		} else if err != ErrUnsupportedDIB {
-			logger.Error("Failed to read CF_DIB: %v", err)
-			logger.Debug("Total Read() duration: %v", time.Since(startTime))
-			return content, err
-		} else {
-			logger.Warn("Unsupported DIB format")
-		}
-	} else if hasClipboardFormat(CF_UNICODETEXT) {
+	if options.preferTextOverImages && hasClipboardFormat(CF_UNICODETEXT) {
 		content.Type = Text
 		text, err := readUnicodeText()
 
 		if err != nil {
-			logger.Error("Failed to read CF_UNICODETEXT: %v", err)
-			logger.Debug("Total Read() duration: %v", time.Since(startTime))
+			logger.Error("Не удалось прочитать CF_UNICODETEXT: %v", err)
 			return content, err
 		}
 		content.Text = text
 		content.SizeBytes = len([]byte(text))
 		content.Preview = formatTextPreview(text)
-	} else {
-		content.Preview = "Empty clipboard"
+		return content, nil
 	}
 
-	logger.Debug("Total Read() duration: %v", time.Since(startTime))
+	if imageFormat := pickClipboardImageFormat(); imageFormat != 0 {
+		content.Type = Image
+		if !options.allowSlowImages {
+			content.Preview = "Изображение пропущено для безопасного мониторинга буфера"
+			return content, nil
+		}
+
+		dibData, err := readClipboardDIBBytes(imageFormat)
+		if err != nil {
+			logger.Error("Не удалось прочитать %s: %v", clipboardFormatName(imageFormat), err)
+			return content, err
+		}
+
+		closeClipboardTracked()
+
+		imgData, err := dibToPNG(dibData)
+		if err != nil {
+			if err == ErrUnsupportedDIB {
+				err = fmt.Errorf("неподдерживаемый формат изображения в буфере (%s): %w", clipboardFormatName(imageFormat), err)
+				logger.Warn("%v", err)
+				return content, err
+			}
+			logger.Error("Не удалось конвертировать %s в PNG: %v", clipboardFormatName(imageFormat), err)
+			return content, err
+		}
+
+		content.ImagePNG = imgData
+		content.SizeBytes = len(imgData)
+		content.Preview = formatImagePreview(imgData)
+		return content, nil
+	}
+
+	if hasClipboardFormat(CF_UNICODETEXT) {
+		content.Type = Text
+		text, err := readUnicodeText()
+
+		if err != nil {
+			logger.Error("Не удалось прочитать CF_UNICODETEXT: %v", err)
+			return content, err
+		}
+		content.Text = text
+		content.SizeBytes = len([]byte(text))
+		content.Preview = formatTextPreview(text)
+		return content, nil
+	}
+
+	content.Preview = "Empty clipboard"
 	return content, nil
 }
 
@@ -414,31 +416,19 @@ func Write(content ClipboardContent) error {
 	// Write content based on type (fast SetClipboardData calls)
 	switch content.Type {
 	case Text:
-		ret, _, sysErr := procSetClipboardData.Call(CF_UNICODETEXT, textHandle)
-		if ret == 0 {
-			procGlobalFree.Call(textHandle)
-			if sysErr != nil && sysErr.Error() != "The operation completed successfully." {
-				logger.Error("Failed to write CF_UNICODETEXT: %v", sysErr)
-				return sysErr
-			}
+		if err := setClipboardData(CF_UNICODETEXT, textHandle); err != nil {
+			logger.Error("Не удалось записать %s: %v", clipboardFormatName(CF_UNICODETEXT), err)
+			return err
 		}
 	case Files:
-		ret, _, sysErr := procSetClipboardData.Call(CF_HDROP, filesHandle)
-		if ret == 0 {
-			procGlobalFree.Call(filesHandle)
-			if sysErr != nil && sysErr.Error() != "The operation completed successfully." {
-				logger.Error("Failed to write CF_HDROP: %v", sysErr)
-				return sysErr
-			}
+		if err := setClipboardData(CF_HDROP, filesHandle); err != nil {
+			logger.Error("Не удалось записать %s: %v", clipboardFormatName(CF_HDROP), err)
+			return err
 		}
 	case Image:
-		ret, _, sysErr := procSetClipboardData.Call(CF_DIB, imageHandle)
-		if ret == 0 {
-			procGlobalFree.Call(imageHandle)
-			if sysErr != nil && sysErr.Error() != "The operation completed successfully." {
-				logger.Error("Failed to write CF_DIB: %v", sysErr)
-				return sysErr
-			}
+		if err := setClipboardData(CF_DIB, imageHandle); err != nil {
+			logger.Error("Не удалось записать %s: %v", clipboardFormatName(CF_DIB), err)
+			return err
 		}
 	}
 
@@ -469,6 +459,53 @@ func openClipboardWithRetry() error {
 	}
 
 	return lastErr
+}
+
+func pickClipboardImageFormat() uint32 {
+	if hasClipboardFormat(CF_DIB) {
+		return CF_DIB
+	}
+	if hasClipboardFormat(CF_DIBV5) {
+		return CF_DIBV5
+	}
+	return 0
+}
+
+func clipboardFormatName(format uint32) string {
+	switch format {
+	case CF_UNICODETEXT:
+		return "CF_UNICODETEXT"
+	case CF_HDROP:
+		return "CF_HDROP"
+	case CF_DIB:
+		return "CF_DIB"
+	case CF_DIBV5:
+		return "CF_DIBV5"
+	default:
+		return fmt.Sprintf("format=%d", format)
+	}
+}
+
+func setClipboardData(format uint32, handle uintptr) error {
+	ret, _, sysErr := procSetClipboardData.Call(uintptr(format), handle)
+	if ret != 0 {
+		return nil
+	}
+
+	procGlobalFree.Call(handle)
+	if isZeroSyscallError(sysErr) {
+		return fmt.Errorf("SetClipboardData(%s) вернул 0 без кода ошибки", clipboardFormatName(format))
+	}
+	return fmt.Errorf("SetClipboardData(%s): %w", clipboardFormatName(format), sysErr)
+}
+
+func isZeroSyscallError(err error) bool {
+	if err == nil {
+		return true
+	}
+
+	errno, ok := err.(syscall.Errno)
+	return ok && errno == 0
 }
 
 // Helper functions for clipboard operations
