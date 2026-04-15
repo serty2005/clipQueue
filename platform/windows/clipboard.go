@@ -53,6 +53,7 @@ type ClipboardContent struct {
 	ImagePNG  []byte
 	SizeBytes int
 	Preview   string
+	SourceSeq uint32
 }
 
 // readClipboardDIBBytes reads raw DIB data from clipboard without conversion
@@ -84,8 +85,7 @@ func readClipboardDIBBytes(format uint32) ([]byte, error) {
 }
 
 type readClipboardOptions struct {
-	allowSlowImages      bool
-	preferTextOverImages bool
+	allowSlowImages bool
 }
 
 // Read reads the current clipboard content and returns it as ClipboardContent
@@ -98,8 +98,7 @@ func Read() (ClipboardContent, error) {
 // ReadForClipboardWatcher читает буфер в безопасном режиме для фонового наблюдателя.
 func ReadForClipboardWatcher() (ClipboardContent, error) {
 	return readClipboard(readClipboardOptions{
-		allowSlowImages:      false,
-		preferTextOverImages: true,
+		allowSlowImages: false,
 	})
 }
 
@@ -144,24 +143,10 @@ func readClipboard(options readClipboardOptions) (ClipboardContent, error) {
 		return content, nil
 	}
 
-	if options.preferTextOverImages && hasClipboardFormat(CF_UNICODETEXT) {
-		content.Type = Text
-		text, err := readUnicodeText()
-
-		if err != nil {
-			logger.Error("Не удалось прочитать CF_UNICODETEXT: %v", err)
-			return content, err
-		}
-		content.Text = text
-		content.SizeBytes = len([]byte(text))
-		content.Preview = formatTextPreview(text)
-		return content, nil
-	}
-
 	if imageFormat := pickClipboardImageFormat(); imageFormat != 0 {
 		content.Type = Image
 		if !options.allowSlowImages {
-			content.Preview = "Изображение пропущено для безопасного мониторинга буфера"
+			content.Preview = "Изображение ожидает безопасного захвата"
 			return content, nil
 		}
 
