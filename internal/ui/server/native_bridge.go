@@ -39,10 +39,11 @@ func (s *Server) buildHistoryDTOs() []HistoryItemDTO {
 	for i := len(history) - 1; i >= 0; i-- {
 		item := history[i]
 		dto := HistoryItemDTO{
-			ID:        item.ID,
-			Type:      item.Type.String(),
-			Preview:   item.Preview,
-			Timestamp: item.Timestamp,
+			ID:                item.ID,
+			Type:              item.Type.String(),
+			Preview:           item.Preview,
+			Timestamp:         item.Timestamp,
+			NeedsImageCapture: item.NeedsImageCapture(),
 		}
 		if idx, exists := queueMap[item.ID]; exists {
 			dto.IsQueued = true

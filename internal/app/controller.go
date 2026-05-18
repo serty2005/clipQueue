@@ -173,7 +173,6 @@ func (c *Controller) OnClipboardUpdate() {
 	if content.Type == windows.Image {
 		content.SourceSeq = seq
 	}
-	needsDeferredImageCapture := content.Type == windows.Image && len(content.ImagePNG) == 0
 
 	c.mu.Lock()
 
@@ -202,14 +201,12 @@ func (c *Controller) OnClipboardUpdate() {
 	}
 
 	// Add to history if enabled
-	stored := false
 	if c.cfg.Features.EnableClipboard {
 		if len(c.history) >= 50 {
 			c.history = c.history[1:]
 		}
 		c.history = append(c.history, content)
 		c.currentClipboardID = content.ID
-		stored = true
 		logger.Debug("OnClipboardUpdate: добавлено в историю (тип=%s, размер=%d байт, предпросмотр=%q, длина истории=%d)",
 			content.Type.String(), content.SizeBytes, content.Preview, len(c.history))
 	}
@@ -217,7 +214,6 @@ func (c *Controller) OnClipboardUpdate() {
 	// Add to queue only while queue mode is enabled.
 	if c.cfg.Features.EnableQueue && c.queueEnabled {
 		c.queue = append(c.queue, content)
-		stored = true
 		cb := c.onStateChange
 		uiCB := c.onUIRefresh
 		enabled := c.queueEnabled
@@ -227,9 +223,6 @@ func (c *Controller) OnClipboardUpdate() {
 
 		logger.Info("OnClipboardUpdate: добавлено в очередь (тип=%s, размер=%d байт, предпросмотр=%q, длина очереди=%d)",
 			content.Type.String(), content.SizeBytes, content.Preview, count)
-		if stored && needsDeferredImageCapture {
-			go c.captureDeferredImage(content.ID, seq)
-		}
 		cb(enabled, count, mode)
 		uiCB()
 		return
@@ -238,9 +231,6 @@ func (c *Controller) OnClipboardUpdate() {
 	uiCB := c.onUIRefresh
 	c.mu.Unlock()
 	logger.Debug("OnClipboardUpdate: не добавлено в очередь (режим очереди выключен или фича отключена)")
-	if stored && needsDeferredImageCapture {
-		go c.captureDeferredImage(content.ID, seq)
-	}
 	uiCB()
 }
 
@@ -467,37 +457,6 @@ func (c *Controller) clipboardContentMatches(current, previous windows.Clipboard
 	}
 }
 
-func (c *Controller) deferredImageCaptureDelay() time.Duration {
-	delayMs := c.cfg.Clipboard.WatchDebounceMs * 10
-	if delayMs < 300 {
-		delayMs = 300
-	}
-	return time.Duration(delayMs) * time.Millisecond
-}
-
-func (c *Controller) captureDeferredImage(id string, expectedSeq uint32) {
-	time.Sleep(c.deferredImageCaptureDelay())
-
-	if windows.GetClipboardSequenceNumber() != expectedSeq {
-		logger.Debug("Отложенный захват изображения отменён: буфер уже сменился (id=%s, seq=%d)", id, expectedSeq)
-		c.updateDeferredImagePreview(id, "Изображение не сохранено: исходный буфер уже сменился")
-		return
-	}
-
-	item := windows.ClipboardContent{
-		ID:        id,
-		Type:      windows.Image,
-		SourceSeq: expectedSeq,
-	}
-	if _, err := c.resolveImagePayload(item); err != nil {
-		logger.Warn("Не удалось отложенно сохранить изображение из буфера (id=%s, seq=%d): %v", id, expectedSeq, err)
-		c.updateDeferredImagePreview(id, "Изображение не удалось сохранить локально")
-		return
-	}
-
-	logger.Debug("Отложенный захват изображения завершён (id=%s, seq=%d)", id, expectedSeq)
-}
-
 func (c *Controller) resolveImagePayload(item windows.ClipboardContent) (windows.ClipboardContent, error) {
 	if item.Type != windows.Image || len(item.ImagePNG) > 0 {
 		return item, nil
@@ -508,7 +467,7 @@ func (c *Controller) resolveImagePayload(item windows.ClipboardContent) (windows
 
 	currentSeq := windows.GetClipboardSequenceNumber()
 	if currentSeq != item.SourceSeq {
-		return item, fmt.Errorf("изображение уже недоступно: исходный буфер был заменён")
+		return item, fmt.Errorf("изображение уже недоступно: исходный буфер был заменён (ожидался seq=%d, текущий seq=%d)", item.SourceSeq, currentSeq)
 	}
 
 	logger.Debug("Дочитываем изображение из буфера по требованию (id=%s, seq=%d)", item.ID, item.SourceSeq)
@@ -556,34 +515,6 @@ func (c *Controller) applyResolvedImagePayload(id string, resolved windows.Clipb
 		c.queue[i].SizeBytes = resolved.SizeBytes
 		c.queue[i].Preview = resolved.Preview
 		c.queue[i].SourceSeq = resolved.SourceSeq
-		updated = true
-	}
-
-	c.mu.Unlock()
-
-	if updated {
-		uiCB()
-	}
-}
-
-func (c *Controller) updateDeferredImagePreview(id string, preview string) {
-	c.mu.Lock()
-	uiCB := c.onUIRefresh
-	updated := false
-
-	for i := range c.history {
-		if c.history[i].ID != id || c.history[i].Type != windows.Image || len(c.history[i].ImagePNG) > 0 {
-			continue
-		}
-		c.history[i].Preview = preview
-		updated = true
-	}
-
-	for i := range c.queue {
-		if c.queue[i].ID != id || c.queue[i].Type != windows.Image || len(c.queue[i].ImagePNG) > 0 {
-			continue
-		}
-		c.queue[i].Preview = preview
 		updated = true
 	}
 

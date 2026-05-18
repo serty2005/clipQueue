@@ -29,6 +29,7 @@ type HistoryItemDTO struct {
 	QueueIndex         int       `json:"queueIndex"`
 	IsNext             bool      `json:"isNext"`
 	IsCurrentClipboard bool      `json:"isCurrentClipboard"`
+	NeedsImageCapture  bool      `json:"needsImageCapture"`
 }
 
 // CommandStepDTO represents a single step in a command pipeline for API
@@ -262,10 +263,11 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		for i := len(history) - 1; i >= 0; i-- {
 			item := history[i]
 			dto := HistoryItemDTO{
-				ID:        item.ID,
-				Type:      item.Type.String(),
-				Preview:   item.Preview,
-				Timestamp: item.Timestamp,
+				ID:                item.ID,
+				Type:              item.Type.String(),
+				Preview:           item.Preview,
+				Timestamp:         item.Timestamp,
+				NeedsImageCapture: item.NeedsImageCapture(),
 			}
 			if idx, exists := queueMap[item.ID]; exists {
 				dto.IsQueued = true

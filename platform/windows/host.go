@@ -371,6 +371,7 @@ func (h *Host) Start() error {
 			return
 		}
 		h.hwnd = ret
+		SetClipboardOwnerWindow(h.hwnd)
 
 		// Set hwnd for input listener
 		h.inputListener = NewInputListener(h.hwnd)
@@ -414,6 +415,7 @@ func (h *Host) Start() error {
 		if h.tray != nil {
 			h.tray.Remove()
 		}
+		SetClipboardOwnerWindow(0)
 		procDestroyWindow.Call(h.hwnd)
 		procUnregisterClass.Call(uintptr(unsafe.Pointer(h.className)), 0)
 	}()

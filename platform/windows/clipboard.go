@@ -56,6 +56,10 @@ type ClipboardContent struct {
 	SourceSeq uint32
 }
 
+func (c ClipboardContent) NeedsImageCapture() bool {
+	return c.Type == Image && len(c.ImagePNG) == 0 && c.SourceSeq != 0
+}
+
 // readClipboardDIBBytes reads raw DIB data from clipboard without conversion
 func readClipboardDIBBytes(format uint32) ([]byte, error) {
 	handle, _, err := procGetClipboardData.Call(uintptr(format))
@@ -213,6 +217,10 @@ func Write(content ClipboardContent) error {
 		lastWriteSeq.Store(GetClipboardSequenceNumber())
 		logger.Debug("Total Write() duration (clear): %v", time.Since(startTime))
 		return nil
+	}
+
+	if clipboardOpenOwner() == 0 {
+		return fmt.Errorf("окно-владелец буфера обмена не зарегистрировано")
 	}
 
 	// Prepare payloads BEFORE opening clipboard
@@ -568,6 +576,16 @@ var (
 )
 
 var lastWriteSeq atomic.Uint32
+var clipboardOwnerHWND atomic.Uintptr
+
+// SetClipboardOwnerWindow регистрирует окно, которое будет владельцем буфера при записи.
+func SetClipboardOwnerWindow(hwnd uintptr) {
+	clipboardOwnerHWND.Store(hwnd)
+}
+
+func clipboardOpenOwner() uintptr {
+	return clipboardOwnerHWND.Load()
+}
 
 // GetClipboardSequenceNumber retrieves the current clipboard sequence number
 func GetClipboardSequenceNumber() uint32 {
@@ -582,7 +600,7 @@ var (
 )
 
 func openClipboard() error {
-	ret, _, err := procOpenClipboard.Call(0)
+	ret, _, err := procOpenClipboard.Call(clipboardOpenOwner())
 	if ret == 0 {
 		return err
 	}
