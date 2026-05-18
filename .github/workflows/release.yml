@@ -51,13 +51,13 @@ jobs:
     name: Собрать и опубликовать релиз
     needs: detect-release
     if: needs.detect-release.outputs.should_release == 'true'
-    runs-on: windows-latest
+    runs-on: windows-2022
     steps:
       - name: Получить код
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Настроить Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
@@ -73,10 +73,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ needs.detect-release.outputs.version }}
         run: |
-          gh release view $env:RELEASE_VERSION *> $null
+          $releaseCheckOutput = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$env:RELEASE_VERSION" --silent 2>&1
           if ($LASTEXITCODE -eq 0) {
             Write-Error "Релиз с тегом $env:RELEASE_VERSION уже существует."
+            exit 1
           }
+
+          if ($releaseCheckOutput -notmatch "HTTP 404") {
+            Write-Error "Не удалось проверить наличие релиза с тегом $env:RELEASE_VERSION."
+            $releaseCheckOutput | Write-Error
+            exit 1
+          }
+
+          $global:LASTEXITCODE = 0
 
       - name: Опубликовать релиз
         shell: pwsh
